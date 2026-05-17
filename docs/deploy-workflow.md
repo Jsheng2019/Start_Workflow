@@ -20,7 +20,7 @@ name → on(workflow_dispatch + push) → concurrency → jobs → prepare → d
 
 ---
 
-### 第 3-20 行：`on:` 双触发器
+### 第 3-22 行：`on:` 双触发器
 
 ```yaml
 on:
@@ -57,7 +57,7 @@ on:
 
 ---
 
-### 第 22-24 行：`concurrency` 并发控制
+### 第 24-27 行：`concurrency` 并发控制
 
 ```yaml
 concurrency:
@@ -72,7 +72,7 @@ concurrency:
 
 ---
 
-### 第 26-43 行：`prepare` Job — 解析参数
+### 第 29-49 行：`prepare` Job — 解析参数
 
 ```yaml
 prepare:
@@ -106,7 +106,7 @@ prepare:
 
 ---
 
-### 第 45-75 行：`deploy-staging` Job
+### 第 51-85 行：`deploy-staging` Job
 
 #### 条件运行
 
@@ -145,7 +145,7 @@ env:
 
 ---
 
-### 第 77-107 行：`deploy-production` Job
+### 第 86-122 行：`deploy-production` Job
 
 ```yaml
 deploy-production:

@@ -20,7 +20,7 @@ name → on(tag push + workflow_dispatch) → jobs → build-and-test → create
 
 ---
 
-### 第 3-16 行：`on:` Tag 触发 + 手动触发
+### 第 3-21 行：`on:` Tag 触发 + 手动触发
 
 ```yaml
 on:
@@ -62,7 +62,7 @@ prerelease:
 
 ---
 
-### 第 18-56 行：`build-and-test` Job
+### 第 23-61 行：`build-and-test` Job
 
 ```yaml
 build-and-test:
@@ -104,7 +104,7 @@ build-and-test:
 
 ---
 
-### 第 58-108 行：`create-release` Job — 核心发布逻辑
+### 第 62-121 行：`create-release` Job — 核心发布逻辑
 
 ```yaml
 create-release:
@@ -195,7 +195,7 @@ create-release:
 
 ---
 
-### 第 110-126 行：`notify` Job — 发布后处理
+### 第 123-139 行：`notify` Job — 发布后处理
 
 ```yaml
 notify:

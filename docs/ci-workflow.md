@@ -20,7 +20,7 @@ name → on → jobs → job → runs-on → strategy → steps → step
 
 ---
 
-### 第 4-7 行：`on:` 触发器
+### 第 4-8 行：`on:` 触发器
 
 ```yaml
 on:
@@ -39,13 +39,13 @@ on:
 
 ---
 
-### 第 9 行：`jobs:` 作业集合
+### 第 11 行：`jobs:` 作业集合
 
 所有实际执行的任务都定义在 `jobs:` 下面。一个工作流可以有多个 job，默认并行运行。
 
 ---
 
-### 第 10-13 行：`build:` Job 基础配置
+### 第 13-15 行：`build:` Job 基础配置
 
 ```yaml
 build:
@@ -57,7 +57,7 @@ build:
 
 ---
 
-### 第 14-16 行：`strategy.matrix` 矩阵策略
+### 第 17-19 行：`strategy.matrix` 矩阵策略
 
 ```yaml
 strategy:
@@ -71,9 +71,9 @@ strategy:
 
 ---
 
-### 第 18-42 行：`steps:` 执行步骤
+### 第 22-47 行：`steps:` 执行步骤
 
-#### Step 1 (第 20-21 行)：检出代码
+#### Step 1 (第 24-25 行)：检出代码
 
 ```yaml
 - name: Checkout code
@@ -84,7 +84,7 @@ strategy:
 - **`uses:`** — 引用一个社区/官方发布的 Action。`actions/checkout@v4` 是 GitHub 官方出品，用于将仓库代码克隆到 runner 的工作目录。
 - **`@v4`** — 版本号。建议锁定大版本，既能获得补丁更新，又不会因 breaking change 导致流水线挂掉。
 
-#### Step 2 (第 24-28 行)：安装 Node.js
+#### Step 2 (第 28-32 行)：安装 Node.js
 
 ```yaml
 - name: Setup Node.js ${{ matrix.node-version }}
@@ -99,7 +99,7 @@ strategy:
 - **`${{ }}`** — 表达式语法，用于访问上下文变量和函数。
 - **`cache: 'npm'`** — 自动缓存 `node_modules`，后续运行直接命中缓存，大幅加速。内部通过 hash `package-lock.json` 来判断缓存是否有效。
 
-#### Step 3 (第 31-32 行)：安装依赖
+#### Step 3 (第 35-36 行)：安装依赖
 
 ```yaml
 - name: Install dependencies
@@ -111,7 +111,7 @@ strategy:
   - `npm ci` 严格按 `package-lock.json` 安装，不会修改 lock 文件，适合 CI 环境。
   - `npm install` 可能更新依赖版本，导致 CI 与本地不一致。
 
-#### Step 4 (第 35-36 行)：构建项目
+#### Step 4 (第 39-40 行)：构建项目
 
 ```yaml
 - name: Build project
@@ -120,7 +120,7 @@ strategy:
 
 - **`--if-present`** — 如果 `package.json` 中没有 `build` 脚本，此步骤不会报错，直接跳过。这使工作流可以适配没有构建步骤的项目。
 
-#### Step 5 (第 39-42 行)：上传产物
+#### Step 5 (第 43-47 行)：上传产物
 
 ```yaml
 - name: Upload build artifact
@@ -136,7 +136,7 @@ strategy:
 
 ---
 
-### 第 45-53 行：`lint` Job
+### 第 49-61 行：`lint` Job
 
 ```yaml
 lint:
@@ -150,7 +150,7 @@ lint:
 
 ---
 
-### 第 56-65 行：`test` Job
+### 第 63-75 行：`test` Job
 
 ```yaml
 test:

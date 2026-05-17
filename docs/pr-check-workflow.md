@@ -20,7 +20,7 @@ name → on(pull_request types) → permissions → jobs → title-check → siz
 
 ---
 
-### 第 3-5 行：`on:` 精确的 PR 事件类型
+### 第 3-6 行：`on:` 精确的 PR 事件类型
 
 ```yaml
 on:
@@ -40,7 +40,7 @@ on:
 
 ---
 
-### 第 7-9 行：`permissions` 权限声明
+### 第 8-11 行：`permissions` 权限声明
 
 ```yaml
 permissions:
@@ -55,7 +55,7 @@ permissions:
 
 ---
 
-### 第 11-32 行：`title-check` Job — PR 标题格式检查
+### 第 14-38 行：`title-check` Job — PR 标题格式检查
 
 ```yaml
 title-check:

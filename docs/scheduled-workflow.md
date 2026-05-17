@@ -20,7 +20,7 @@ name → on(schedule + workflow_dispatch) → jobs → stale-management → secu
 
 ---
 
-### 第 3-10 行：`on:` 定时触发器 + 手动触发
+### 第 3-12 行：`on:` 定时触发器 + 手动触发
 
 ```yaml
 on:
@@ -59,7 +59,7 @@ on:
 
 ---
 
-### 第 12-50 行：`stale-management` Job — 过期管理
+### 第 14-48 行：`stale-management` Job — 过期管理
 
 ```yaml
 stale-management:
@@ -157,7 +157,7 @@ security-audit:
 
 ---
 
-### 第 79-113 行：`repo-health` Job — 仓库健康检查
+### 第 79-112 行：`repo-health` Job — 仓库健康检查
 
 ```yaml
 repo-health:
