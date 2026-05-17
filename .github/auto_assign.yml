@@ -1,0 +1,23 @@
+# Configuration for kentaro-m/auto-assign-action
+# Used by: pr-check.yml → auto-assign job
+
+# Set to true to add reviewers (who should review the PR)
+addReviewers: true
+
+# Set to true to add assignees (who is responsible for the PR)
+addAssignees: author
+
+# A list of reviewers to be added (GitHub usernames)
+reviewers:
+  - Jsheng2019
+
+# Number of reviewers to randomly pick from the reviewer list
+numberOfReviewers: 1
+
+# Skip adding reviewers/assignees if the PR is marked as a draft
+skipDraft: true
+
+# Skip keywords — if the PR title contains any of these, skip auto-assign
+skipKeywords:
+  - wip
+  - work in progress

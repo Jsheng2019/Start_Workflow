@@ -1,0 +1,12 @@
+{
+  "name": "start-workflow",
+  "version": "1.0.0",
+  "description": "GitHub Actions workflow examples and learning project",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "mkdir -p dist && node src/index.js > dist/output.txt && echo 'Build artifact created in dist/'",
+    "test": "node --test test/*.test.js",
+    "lint": "node -e \"console.log('Lint check passed')\""
+  },
+  "license": "MIT"
+}

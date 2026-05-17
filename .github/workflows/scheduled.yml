@@ -67,7 +67,7 @@ jobs:
         # 检查生产依赖中是否存在高危漏洞，但不阻塞 CI
         # 审计结果会输出到日志供审查
         continue-on-error: true
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high > npm-audit-output.txt 2>&1
 
       - name: Upload audit report
         if: failure()
