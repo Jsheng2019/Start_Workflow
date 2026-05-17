@@ -122,7 +122,7 @@ with:
 
 ---
 
-### 第 52-76 行：`security-audit` Job — 安全审计
+### 第 50-77 行：`security-audit` Job — 安全审计
 
 ```yaml
 security-audit:
@@ -135,24 +135,29 @@ security-audit:
 ```yaml
 - name: Run npm audit
   continue-on-error: true
-  run: npm audit --audit-level=high
+  run: npm audit --audit-level=high > npm-audit-output.txt 2>&1
 ```
 
 - **`npm audit`** — 检查项目依赖中是否存在已知的安全漏洞。
 - **`--audit-level=high`** — 只报告 `high` 和 `critical` 级别的漏洞，忽略低危和中危。
+- **`> npm-audit-output.txt 2>&1`** — Shell 重定向。`>` 将 stdout 写入文件，`2>&1` 将 stderr（文件描述符 2）合并到 stdout 的当前位置。由于 `npm audit` 将漏洞报告输出到 stderr，这两个重定向必须一起使用，才能将完整报告写入文件供后续步骤上传。如果只用 `>`，stderr 内容仍会打印到终端而不写入文件。
 - **`continue-on-error: true`** — **关键配置**。即使 `npm audit` 发现了高危漏洞（命令返回非零退出码），也不会让 job 失败。这在安全审计场景中很重要：**发现漏洞应该被记录，但不应该阻塞其他流程**。
 
 ```yaml
 - name: Upload audit report
   if: failure()
   uses: actions/upload-artifact@v4
+  with:
+    name: security-audit-report
+    path: npm-audit-output.txt
 ```
 
 - **`if: failure()`** — 只有审计步骤发现漏洞（失败）时才上传报告。如果审计通过（无高危漏洞），就没有必要上传空报告。
+- **`path: npm-audit-output.txt`** — 上传上一步通过重定向写入的审计报告文件。注意文件名必须与重定向的目标文件名完全一致。
 
 ---
 
-### 第 78-108 行：`repo-health` Job — 仓库健康检查
+### 第 79-113 行：`repo-health` Job — 仓库健康检查
 
 ```yaml
 repo-health:

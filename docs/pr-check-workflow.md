@@ -92,7 +92,7 @@ title-check:
 
 ---
 
-### 第 34-53 行：`size-label` Job — 自动标记 PR 大小
+### 第 40-65 行：`size-label` Job — 自动标记 PR 大小
 
 ```yaml
 size-label:
@@ -108,29 +108,31 @@ size-label:
 ```yaml
     - uses: codelytv/pr-size-labeler@v1
       with:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         xs_label: 'size/xs'
-        xs_max_size: 10
+        xs_max_size: '10'
         s_label: 'size/s'
-        s_max_size: 100
+        s_max_size: '100'
         m_label: 'size/m'
-        m_max_size: 500
+        m_max_size: '500'
         l_label: 'size/l'
-        l_max_size: 1000
+        l_max_size: '1000'
         xl_label: 'size/xl'
-        fail_if_xl: false
+        fail_if_xl: 'false'
         files_to_ignore: 'package-lock.json *.lock docs/*'
 ```
 
 - **`codelytv/pr-size-labeler@v1`** — 根据 PR 变更行数自动添加大小标签。
-- **`xs_max_size: 10`** — 变更 ≤ 10 行打上 `size/xs` 标签。
-- **`s_max_size: 100`** — 变更 ≤ 100 行打上 `size/s` 标签。
+- **`GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}`** — **必填参数**。该 Action 需要使用 GitHub API 来读取 PR 差异和添加标签，如果没有此参数会导致 `Resource not accessible` 错误。
+- **`xs_max_size: '10'`** — 变更 ≤ 10 行打上 `size/xs` 标签。值用引号包裹是因为该 Action 的参数要求字符串类型。
+- **`s_max_size: '100'`** — 变更 ≤ 100 行打上 `size/s` 标签。
 - 以此类推，共有 5 个大小等级。
-- **`fail_if_xl: false`** — 即使 PR 超过 1000 行也不使检查失败（只打标签提醒）。
+- **`fail_if_xl: 'false'`** — 即使 PR 超过 1000 行也不使检查失败（只打标签提醒）。
 - **`files_to_ignore:`** — 排除自动生成或非关键文件的变更行数。`package-lock.json`、任何 `.lock` 文件、`docs/` 目录下的文件都不计入统计。这样可以让大小标签更真实地反映实际业务代码的变更量。
 
 ---
 
-### 第 55-63 行：`auto-assign` Job — 自动分配
+### 第 67-77 行：`auto-assign` Job — 自动分配
 
 ```yaml
 auto-assign:
@@ -151,7 +153,7 @@ auto-assign:
 
 ---
 
-### 第 65-81 行：`unresolved-check` Job — 自定义脚本
+### 第 79-101 行：`unresolved-check` Job — 自定义脚本
 
 ```yaml
 unresolved-check:
