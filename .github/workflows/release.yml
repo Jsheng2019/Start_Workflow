@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  # 当推送 tag 时触发（如 v1.0.0、v2.3.1）
+  push:
+    tags:
+      - 'v*.*.*'
+
+  # 也可以手动触发
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号（如 1.2.0）'
+        required: true
+        type: string
+      prerelease:
+        description: '是否为预发布版本？'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  # ---- Job 1: 构建和测试 ---------------------------------------------
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test --if-present
+
+      - name: Build
+        run: npm run build --if-present
+
+      # 将构建产物打包上传，供后续 job 使用
+      - name: Package release assets
+        run: |
+          mkdir -p release
+          # 如果有 dist 目录则打包
+          if [ -d "dist" ]; then
+            tar -czf release/dist.tar.gz dist/
+          fi
+          # 如果有 package.json 则复制
+          if [ -f "package.json" ]; then
+            cp package.json release/
+          fi
+
+      - name: Upload release assets for next job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release/
+
+  # ---- Job 2: 创建 GitHub Release ------------------------------------
+  create-release:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # 需要写权限来创建 Release
+    outputs:
+      # 将生成的版本号输出
+      upload_url: ${{ steps.create-release.outputs.upload_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # 获取完整历史用于生成 changelog
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release/
+
+      - name: Determine version
+        id: version
+        run: |
+          # 从 tag 名称中提取版本号，或使用手动输入的版本号
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # 从 tag ref 中提取版本号：refs/tags/v1.2.3 -> 1.2.3
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            IS_PRERELEASE="${{ github.event.inputs.prerelease }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "is_prerelease=${IS_PRERELEASE:-false}" >> $GITHUB_OUTPUT
+
+      # 自动生成变更日志
+      - name: Generate changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v4
+        with:
+          # 从 tag 模式匹配的提交中提取信息
+          fromTag: ${{ github.ref }}
+          toTag: ${{ github.ref }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        id: create-release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ steps.version.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          prerelease: ${{ steps.version.outputs.is_prerelease }}
+          # 将 release/ 目录下的所有文件作为附件上传
+          files: release/**
+          # 如果同名 Release 已存在则追加，不报错
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---- Job 3: 发布后通知 ---------------------------------------------
+  notify:
+    needs: create-release
+    runs-on: ubuntu-latest
+    # 始终运行通知，确保失败时也能被感知
+    if: always()
+    steps:
+      - name: Notify on success
+        if: needs.create-release.result == 'success'
+        run: |
+          echo "Release published successfully!"
+          echo "Version: ${{ needs.create-release.outputs.upload_url }}"
+
+      - name: Notify on failure
+        if: needs.create-release.result == 'failure'
+        run: |
+          echo "Release failed! Please check the logs."

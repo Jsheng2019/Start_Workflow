@@ -1,0 +1,75 @@
+name: CI Pipeline
+
+# 定义触发条件：push 到 main/master 分支，或发起 PR 时触发
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+# jobs 是工作流的核心，每个 job 在独立的 runner 中运行
+jobs:
+  # ---- Job 1: 代码构建 ------------------------------------------------
+  build:
+    # 运行环境：使用最新的 Ubuntu 系统
+    runs-on: ubuntu-latest
+    # strategy.matrix 可以生成多个并行任务，这里用不同 Node 版本测试
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+
+    # steps 定义这个 job 中的执行步骤，按顺序执行
+    steps:
+      # Step 1: 检出代码到 runner
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: 安装指定版本的 Node.js（同时启用 npm 缓存加速）
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      # Step 3: 安装项目依赖（ci 比 install 更快且严格，适合流水线）
+      - name: Install dependencies
+        run: npm ci
+
+      # Step 4: 执行项目构建
+      - name: Build project
+        run: npm run build --if-present
+
+      # Step 5: 缓存构建产物，供后续 job 复用
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output-${{ matrix.node-version }}
+          path: dist/
+
+  # ---- Job 2: 代码检查（依赖 build 完成）-------------------------------
+  lint:
+    needs: build                         # needs 表示此 job 必须等 build 完成后才运行
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+      - run: npm ci
+      - name: Run linter
+        run: npm run lint --if-present
+
+  # ---- Job 3: 单元测试（依赖 build 完成）-------------------------------
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+      - run: npm ci
+      - name: Run tests
+        run: npm test --if-present

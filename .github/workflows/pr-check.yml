@@ -1,0 +1,99 @@
+name: PR Check
+
+on:
+  # 在 PR 的打开、重新打开、同步（推送新 commit）时触发
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+# 给此工作流读取 PR 内容和写回评论的权限
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # ---- Job 1: PR 标题检查 --------------------------------------------
+  title-check:
+    runs-on: ubuntu-latest
+    steps:
+      # 使用社区 Action 检查 PR 标题是否符合约定式提交格式
+      - name: Check PR title format
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # 用于调用 GitHub API
+        with:
+          # 允许的标题前缀（Conventional Commits 风格）
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          # 标题中是否需要包含 scope，例如 feat(api): add endpoint
+          requireScope: false
+
+  # ---- Job 2: PR 大小检查 --------------------------------------------
+  size-label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # 获取完整 git 历史，以便计算变更行数
+
+      - name: Add size label
+        uses: codelytv/pr-size-labeler@v1
+        with:
+          # 根据变更行数自动打标签
+          xs_label: 'size/xs'
+          xs_max_size: 10
+          s_label: 'size/s'
+          s_max_size: 100
+          m_label: 'size/m'
+          m_max_size: 500
+          l_label: 'size/l'
+          l_max_size: 1000
+          xl_label: 'size/xl'
+          # 提交失败也不影响 PR（非关键检查）
+          fail_if_xl: false
+          # 将文件路径中的特定模式排除在行数统计之外
+          files_to_ignore: 'package-lock.json *.lock docs/*'
+
+  # ---- Job 3: 自动分配 reviewer --------------------------------------
+  auto-assign:
+    runs-on: ubuntu-latest
+    # 仅在 PR 首次打开时运行，避免每次 push 都重新分配
+    if: github.event.action == 'opened'
+    steps:
+      - name: Auto assign author as assignee
+        uses: kentaro-m/auto-assign-action@v2.0.0
+        with:
+          # 从仓库的 .github/auto_assign.yml 读取配置
+          configuration-path: '.github/auto_assign.yml'
+
+  # ---- Job 4: 检查是否有未解决的 conversation -------------------------
+  unresolved-check:
+    runs-on: ubuntu-latest
+    # always() 确保即使前置 job 失败也会运行
+    if: always()
+    steps:
+      - name: Check for unresolved conversations
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // 使用 GitHub Script Action 编写自定义逻辑
+            // 检查 PR 中是否有未解决的 review 讨论
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            console.log(`Found ${reviews.length} reviews`);
+
+            // 此脚本仅做演示，实际无需阻止合并
+            return 'PR check completed';

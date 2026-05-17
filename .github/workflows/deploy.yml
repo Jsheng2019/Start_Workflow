@@ -1,0 +1,122 @@
+name: Deploy Pipeline
+
+on:
+  # 方式一：手动触发，可以选择要部署的环境
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: '选择部署环境'
+        required: true
+        type: choice
+        default: 'staging'
+        options:
+          - staging
+          - production
+      version:
+        description: '部署版本号（留空则使用最新）'
+        required: false
+        type: string
+
+  # 方式二：当 push 到 main 分支且 CI 通过后，自动部署到 staging
+  push:
+    branches: [main]
+
+# concurrency 防止同一环境同时部署多个版本，cancel-in-progress 会取消旧部署
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---- Job 1: 确定部署参数 --------------------------------------------
+  prepare:
+    runs-on: ubuntu-latest
+    # outputs 可以将此 job 的数据传递给后续 job
+    outputs:
+      env: ${{ steps.resolve-env.outputs.env }}
+      version: ${{ steps.resolve-env.outputs.version }}
+    steps:
+      - name: Resolve environment and version
+        id: resolve-env
+        run: |
+          # 如果用户手动选择了环境，则使用用户选择；否则默认 staging
+          ENV="${{ github.event.inputs.environment || 'staging' }}"
+
+          # 如果手动指定了版本号则使用，否则用短 commit SHA
+          VERSION="${{ github.event.inputs.version || github.sha }}"
+          VERSION="${VERSION:0:7}"
+
+          echo "env=$ENV" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  # ---- Job 2: 部署到 staging ------------------------------------------
+  deploy-staging:
+    needs: prepare
+    # if 条件：只有当环境是 staging 时才运行
+    if: needs.prepare.outputs.env == 'staging'
+    # environment 配置审批和保护规则
+    environment:
+      name: staging
+      url: https://staging.example.com
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run migration (staging DB)
+        run: echo "Running DB migration on staging..."
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+      - name: Deploy to staging
+        run: echo "Deploying version ${{ needs.prepare.outputs.version }} to staging..."
+        env:
+          CLOUD_API_KEY: ${{ secrets.STAGING_API_KEY }}
+
+  # ---- Job 3: 部署到 production（需手动审批）---------------------------
+  deploy-production:
+    needs: [prepare, deploy-staging]
+    if: needs.prepare.outputs.env == 'production'
+    environment:
+      name: production
+      url: https://example.com
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run migration (production DB)
+        run: echo "Running DB migration on production..."
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+
+      - name: Deploy to production
+        run: echo "Deploying version ${{ needs.prepare.outputs.env }} to production..."
+        env:
+          CLOUD_API_KEY: ${{ secrets.PRODUCTION_API_KEY }}
+
+      # 部署后通知
+      - name: Notify deployment success
+        if: success()
+        run: echo "Deploy success! Sending notification..."

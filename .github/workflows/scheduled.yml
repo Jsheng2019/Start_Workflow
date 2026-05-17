@@ -1,0 +1,112 @@
+name: Scheduled Tasks
+
+on:
+  # cron 定时触发器（使用的是 UTC 时间）
+  schedule:
+    # 每天 UTC 0:00 运行（北京时间 8:00）
+    - cron: '0 0 * * *'
+    # 每周一 UTC 6:00 运行（北京时间周一 14:00）
+    - cron: '0 6 * * 1'
+
+  # 也支持手动触发
+  workflow_dispatch:
+
+jobs:
+  # ---- Job 1: 处理过期 issue 和 PR -----------------------------------
+  stale-management:
+    runs-on: ubuntu-latest
+    # 仅在定时触发时运行，手动触发时跳过
+    if: github.event_name == 'schedule'
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Close stale issues and PRs
+        uses: actions/stale@v9
+        with:
+          # 30 天无活动则标记为 stale
+          days-before-issue-stale: 30
+          days-before-pr-stale: 45
+          # 标记为 stale 后 7 天无活动则自动关闭
+          days-before-issue-close: 7
+          days-before-pr-close: 7
+          # 添加的标签
+          stale-issue-label: 'stale'
+          stale-pr-label: 'stale'
+          # 标记 stale 时添加的评论
+          stale-issue-message: |
+            此 issue 已 30 天无活动，将被标记为过期。请在 7 天内回应，否则将被自动关闭。
+          stale-pr-message: |
+            此 PR 已 45 天无活动，将被标记为过期。请在 7 天内回应，否则将被自动关闭。
+          # 关闭时添加的评论
+          close-issue-message: '由于长期无活动，此 issue 已被自动关闭。如需继续，请重新打开。'
+          close-pr-message: '由于长期无活动，此 PR 已被自动关闭。如需继续，请重新打开。'
+          # 带有以下标签的 issue/PR 永远不会被标记为过期
+          exempt-issue-labels: 'pinned,security,keep'
+          exempt-pr-labels: 'pinned,security,keep'
+          # 每次操作的上限，防止一次性修改过多
+          operations-per-run: 30
+
+  # ---- Job 2: 依赖安全检查 --------------------------------------------
+  security-audit:
+    runs-on: ubuntu-latest
+    # 每周一执行一次安全检查
+    if: github.event.schedule == '0 6 * * 1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        # 检查生产依赖中是否存在高危漏洞，但不阻塞 CI
+        # 审计结果会输出到日志供审查
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+      - name: Upload audit report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-report
+          path: npm-audit-output.txt
+
+  # ---- Job 3: 仓库健康检查 --------------------------------------------
+  repo-health:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Repository health check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // 检查仓库基本健康指标
+            const days = 30;
+            const since = new Date();
+            since.setDate(since.getDate() - days);
+
+            console.log(`Checking repository health since ${since.toISOString()}`);
+
+            // 获取最近创建但从未更新的 PR
+            const { data: stalePrs } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} type:pr created:<${since.toISOString()} state:open sort:created`,
+            });
+
+            console.log(`Found ${stalePrs.total_count} PRs older than ${days} days`);
+
+            // 如果过期 PR 过多，可以在这里发送通知或创建 issue
+            if (stalePrs.total_count > 10) {
+              console.warn('⚠️  Over 10 stale PRs detected — consider cleanup');
+            }
+
+            return {
+              stale_prs: stalePrs.total_count,
+              check_time: new Date().toISOString()
+            };
