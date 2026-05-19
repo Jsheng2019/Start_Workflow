@@ -5,7 +5,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --production
+RUN npm ci && mkdir -p node_modules
 COPY src/ ./src/
 RUN mkdir -p dist && node src/index.js > dist/output.txt
 
