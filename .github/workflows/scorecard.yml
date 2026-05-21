@@ -10,18 +10,35 @@ on:
 jobs:
   scorecard:
     runs-on: ubuntu-latest
+    env:
+      GITHUB_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Run OpenSSF Scorecard analysis
-        uses: ossf/scorecard-action@v2
-        with:
-          results_file: results.json
-          results_format: json
-          publish_results: false
+      - name: Install scorecard CLI
+        run: |
+          curl -sSL "https://github.com/ossf/scorecard/releases/latest/download/scorecard_linux_amd64" -o scorecard
+          chmod +x scorecard
+          ./scorecard --version
 
-      - name: Print results
-        run: cat results.json
+      - name: Run scorecard (local analysis)
+        run: |
+          ./scorecard --local=. --format=json --show-details > results.json
+          echo "=== Scorecard Results ==="
+          python3 -c "
+          import json
+          with open('results.json') as f:
+              data = json.load(f)
+          print(f'Aggregate score: {data.get(\"score\", \"N/A\")}')
+          print(f'Date: {data.get(\"date\", \"N/A\")}')
+          print()
+          for check in data.get('checks', []):
+              name = check.get('name', '?')
+              score = check.get('score', '?')
+              risk = check.get('risk', '?')
+              doc = check.get('documentation', {}).get('short', '')[:100]
+              print(f'{name:<40}  Score: {str(score):>5}  Risk: {str(risk):>8}')
+          "
