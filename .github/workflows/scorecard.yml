@@ -4,42 +4,58 @@ on:
   push:
     branches: [main, master]
   schedule:
-    # 每周一 08:30 UTC 自动运行
     - cron: '30 8 * * 1'
-  # 允许手动触发
   workflow_dispatch:
 
-# 遵循最小权限原则：默认只读
 permissions: read-all
 
 jobs:
   scorecard:
     runs-on: ubuntu-latest
 
-    permissions:
-      # 上传 SARIF 结果到 GitHub Security 面板
-      security-events: write
-      # 发布结果到 OpenSSF REST API（可选，用于获取徽章）
-      id-token: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # Scorecard 需要完整的 git 历史来分析 commit 签名等
           fetch-depth: 0
 
       - name: Run OpenSSF Scorecard analysis
         uses: ossf/scorecard-action@v2
         with:
-          # 要分析结果的 JSON 文件路径
-          results_file: results.sarif
-          # SARIF 格式用于 GitHub Code Scanning 集成
-          results_format: sarif
-          # 发布到 OpenSSF 公共 REST API（可获取徽章）
-          publish_results: true
+          results_file: results.json
+          results_format: json
+          publish_results: false
 
-      - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: results.sarif
+      - name: Print scorecard results
+        run: |
+          echo '## OpenSSF Scorecard Results' >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo '| Check | Score | Risk | Details |' >> $GITHUB_STEP_SUMMARY
+          echo '|-------|-------|------|---------' >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import json
+          with open('results.json') as f:
+              data = json.load(f)
+          for check in data.get('checks', []):
+              name = check.get('name', '?')
+              score = check.get('score', '?')
+              risk = check.get('risk', '?')
+              doc = check.get('documentation', {}).get('short', '')[:80]
+              print(f'| {name} | {score} | {risk} | {doc} |')
+          "
+          # 汇总评分
+          python3 -c "
+          import json
+          with open('results.json') as f:
+              data = json.load(f)
+          total = 0
+          count = 0
+          for check in data.get('checks', []):
+              score = check.get('score')
+              if score is not None and score >= 0:
+                  total += score
+                  count += 1
+          avg = total / count if count else 0
+          print(f'**Average score: {avg:.1f}/10 across {count} checks**')
+          print(f'**Aggregate score: {data.get(\"score\", \"N/A\")}**')
+          " >> $GITHUB_STEP_SUMMARY
