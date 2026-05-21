@@ -7,12 +7,9 @@ on:
     - cron: '30 8 * * 1'
   workflow_dispatch:
 
-permissions: read-all
-
 jobs:
   scorecard:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,36 +23,5 @@ jobs:
           results_format: json
           publish_results: false
 
-      - name: Print scorecard results
-        run: |
-          echo '## OpenSSF Scorecard Results' >> $GITHUB_STEP_SUMMARY
-          echo '' >> $GITHUB_STEP_SUMMARY
-          echo '| Check | Score | Risk | Details |' >> $GITHUB_STEP_SUMMARY
-          echo '|-------|-------|------|---------' >> $GITHUB_STEP_SUMMARY
-          python3 -c "
-          import json
-          with open('results.json') as f:
-              data = json.load(f)
-          for check in data.get('checks', []):
-              name = check.get('name', '?')
-              score = check.get('score', '?')
-              risk = check.get('risk', '?')
-              doc = check.get('documentation', {}).get('short', '')[:80]
-              print(f'| {name} | {score} | {risk} | {doc} |')
-          "
-          # 汇总评分
-          python3 -c "
-          import json
-          with open('results.json') as f:
-              data = json.load(f)
-          total = 0
-          count = 0
-          for check in data.get('checks', []):
-              score = check.get('score')
-              if score is not None and score >= 0:
-                  total += score
-                  count += 1
-          avg = total / count if count else 0
-          print(f'**Average score: {avg:.1f}/10 across {count} checks**')
-          print(f'**Aggregate score: {data.get(\"score\", \"N/A\")}**')
-          " >> $GITHUB_STEP_SUMMARY
+      - name: Print results
+        run: cat results.json
