@@ -16,28 +16,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install scorecard CLI
-        run: |
-          curl -sSLO "https://github.com/ossf/scorecard/releases/download/v5.5.0/scorecard_5.5.0_linux_amd64.tar.gz"
-          tar xzf scorecard_5.5.0_linux_amd64.tar.gz
-          chmod +x scorecard
-          ./scorecard --version
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@v2.4.3
+        with:
+          results_file: results.json
+          results_format: json
+          publish_results: false
 
-      - name: Run scorecard (local analysis)
+      - name: Print results
         run: |
-          ./scorecard --local=. --format=json --show-details > results.json
-          echo "=== Scorecard Results ==="
+          echo '## Scorecard Results' >> $GITHUB_STEP_SUMMARY
           python3 -c "
           import json
           with open('results.json') as f:
               data = json.load(f)
           print(f'Aggregate score: {data.get(\"score\", \"N/A\")}')
-          print(f'Date: {data.get(\"date\", \"N/A\")}')
-          print()
           for check in data.get('checks', []):
               name = check.get('name', '?')
               score = check.get('score', '?')
-              risk = check.get('risk', '?')
-              doc = check.get('documentation', {}).get('short', '')[:100]
-              print(f'{name:<40}  Score: {str(score):>5}  Risk: {str(risk):>8}')
-          "
+              print(f'{name}: {score}/10')
+          " >> $GITHUB_STEP_SUMMARY
