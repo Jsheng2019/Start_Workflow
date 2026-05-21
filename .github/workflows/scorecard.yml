@@ -23,16 +23,46 @@ jobs:
           results_format: json
           publish_results: false
 
-      - name: Print results
+      - name: Print results to step summary
         run: |
-          echo '## Scorecard Results' >> $GITHUB_STEP_SUMMARY
-          python3 -c "
+          cat <<'PYEOF' > /tmp/format_results.py
           import json
-          with open('results.json') as f:
+
+          RISK_EMOJI = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
+
+          with open("results.json") as f:
               data = json.load(f)
-          print(f'Aggregate score: {data.get(\"score\", \"N/A\")}')
-          for check in data.get('checks', []):
-              name = check.get('name', '?')
-              score = check.get('score', '?')
-              print(f'{name}: {score}/10')
-          " >> $GITHUB_STEP_SUMMARY
+
+          print("## OpenSSF Scorecard Results")
+          print()
+          print(f"**Aggregate Score: {data.get('score', 'N/A')} / 10**")
+          print(f"Date: {data.get('date', 'N/A')}")
+          print()
+
+          checks = data.get("checks", [])
+          if checks:
+              print("| Check | Score | Risk |")
+              print("|-------|-------|------|")
+              total, count = 0, 0
+              for c in checks:
+                  name = c.get("name", "?")
+                  score = c.get("score", None)
+                  risk = c.get("risk", "?")
+                  emoji = RISK_EMOJI.get(risk, "⚪")
+                  s = str(score) if score is not None and score >= 0 else "N/A"
+                  print(f"| {name} | {s} | {emoji} {risk} |")
+                  if score is not None and score >= 0:
+                      total += score
+                      count += 1
+              if count:
+                  avg = total / count
+                  print()
+                  print(f"**Average: {avg:.1f}/10** across {count} checks")
+
+          print()
+          print("[📖 View Guide](https://scorecard.dev/) · [🔧 Fix Low Scores](https://github.com/ossf/scorecard#remediation)")
+          PYEOF
+          python3 /tmp/format_results.py >> $GITHUB_STEP_SUMMARY
+
+      - name: Log results to console
+        run: cat results.json
