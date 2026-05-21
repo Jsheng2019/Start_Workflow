@@ -1,0 +1,45 @@
+name: OpenSSF Scorecard
+
+on:
+  push:
+    branches: [main, master]
+  schedule:
+    # 每周一 08:30 UTC 自动运行
+    - cron: '30 8 * * 1'
+  # 允许手动触发
+  workflow_dispatch:
+
+# 遵循最小权限原则：默认只读
+permissions: read-all
+
+jobs:
+  scorecard:
+    runs-on: ubuntu-latest
+
+    permissions:
+      # 上传 SARIF 结果到 GitHub Security 面板
+      security-events: write
+      # 发布结果到 OpenSSF REST API（可选，用于获取徽章）
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Scorecard 需要完整的 git 历史来分析 commit 签名等
+          fetch-depth: 0
+
+      - name: Run OpenSSF Scorecard analysis
+        uses: ossf/scorecard-action@v2
+        with:
+          # 要分析结果的 JSON 文件路径
+          results_file: results.sarif
+          # SARIF 格式用于 GitHub Code Scanning 集成
+          results_format: sarif
+          # 发布到 OpenSSF 公共 REST API（可获取徽章）
+          publish_results: true
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
