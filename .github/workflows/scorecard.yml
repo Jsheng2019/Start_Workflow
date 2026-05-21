@@ -10,8 +10,6 @@ on:
 jobs:
   scorecard:
     runs-on: ubuntu-latest
-    env:
-      GITHUB_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,13 +18,8 @@ jobs:
 
       - name: Install scorecard CLI
         run: |
-          set -ex
-          curl -sSL -H "Authorization: Bearer $GITHUB_AUTH_TOKEN" \
-            "https://api.github.com/repos/ossf/scorecard/releases/latest" \
-            -o release.json
-          cat release.json | python3 -c "import json,sys; assets=json.load(sys.stdin)['assets']; print([a['browser_download_url'] for a in assets if 'linux_amd64' in a['name']][0])" > dl_url.txt
-          curl -sSL "$(cat dl_url.txt)" -o scorecard.tar.gz
-          tar xzf scorecard.tar.gz
+          curl -sSLO "https://github.com/ossf/scorecard/releases/download/v5.5.0/scorecard_5.5.0_linux_amd64.tar.gz"
+          tar xzf scorecard_5.5.0_linux_amd64.tar.gz
           chmod +x scorecard
           ./scorecard --version
 
