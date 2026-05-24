@@ -880,6 +880,12 @@ jobs:
         id: image-ref
         run: echo "ref=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
+      # Install Cosign for signature verification
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
       # -------------------------------------------------------------------------
       # Pull image by digest (immutable reference)
       # -------------------------------------------------------------------------
