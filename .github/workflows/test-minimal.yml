@@ -1,15 +1,14 @@
-name: Test Debug 10
+name: Test Debug 11
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 env:
-  NODE_VERSION: 20
+  FOO: bar
 
 jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Node: ${{ env.NODE_VERSION }}"
+      - run: echo "hello"
