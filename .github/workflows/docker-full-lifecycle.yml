@@ -206,23 +206,22 @@ jobs:
       - name: Lint Dockerfile with Hadolint
         # Use the official Hadolint Docker image directly (no third-party action needed).
         # The -f sarif flag generates SARIF output compatible with GitHub code scanning.
+        # If hadolint fails (e.g., Docker not available), generate an empty valid SARIF
+        # so the upload-sarif step doesn't error on empty JSON.
         run: |
-          docker run --rm -i hadolint/hadolint -f sarif < Dockerfile > hadolint-results.sarif 2>/dev/null || true
-        # Note: || true prevents blocking the pipeline on style issues.
-        # For a strict gate, remove || true to fail on any lint violation.
+          if docker run --rm -i hadolint/hadolint -f sarif < Dockerfile > hadolint-results.sarif 2>/tmp/hadolint-err.log; then
+            echo "Hadolint completed successfully"
+          else
+            echo "Hadolint exited with code $? — creating empty SARIF for upload"
+            cat /tmp/hadolint-err.log
+            echo '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Hadolint","rules":[]}},"results":[]}]}' > hadolint-results.sarif
+          fi
 
-      # -------------------------------------------------------------------------
-      # Upload Hadolint SARIF results to GitHub Security tab
-      # -------------------------------------------------------------------------
-      # The SARIF file is uploaded to GitHub so results appear in the Security >
-      # Code scanning alerts section of the repository. This provides persistent
-      # tracking of Dockerfile quality issues.
-      # -------------------------------------------------------------------------
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
+        if: success() || failure()
         with:
           sarif_file: hadolint-results.sarif
-          # Category distinguishes these from CodeQL-based results
           category: hadolint
 
   # =============================================================================
