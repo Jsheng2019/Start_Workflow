@@ -261,7 +261,7 @@ jobs:
       tags:     ${{ steps.meta.outputs.tags }}
       labels:   ${{ steps.meta.outputs.labels }}
       json:     ${{ steps.meta.outputs.json }}
-      version:  ${{ steps.meta-latest.outputs.version || steps.meta.outputs.version }}
+      version:  ${{ steps['meta-latest'].outputs.version || steps.meta.outputs.version }}
       digest:   ${{ steps.meta.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
@@ -341,7 +341,7 @@ jobs:
           echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' | sed 's/^/  /'
           echo "Labels:"
           echo "${{ steps.meta.outputs.labels }}" | tr ',' '\n' | sed 's/^/  /'
-          echo "Version: ${{ steps.meta-latest.outputs.version || steps.meta.outputs.version }}"
+          echo "Version: ${{ steps['meta-latest'].outputs.version || steps.meta.outputs.version }}"
 
   # =============================================================================
   # Job 4: build-push — Multi-Platform Docker Build and Push
@@ -567,7 +567,7 @@ jobs:
           # Scan the built container image
           scan-type: image
           # Image reference: use digest for immutable scan target
-          scan-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          scan-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
           # Output format: SARIF for GitHub Security integration
           format: sarif
           # Output file path
@@ -623,7 +623,7 @@ jobs:
           # Command to run: quickview gives summary, recommendations gives fixes
           command: quickview,recommendations
           # Image reference with digest
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
           # Only show CRITICAL and HIGH severity
           severity: ${{ env.TRIVY_SEVERITY }}
           # GitHub token for GHCR authentication
@@ -641,7 +641,7 @@ jobs:
         if: always()
         run: |
           echo "=== Trivy Scan Summary ==="
-          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}"
           echo "Severity threshold: ${{ env.TRIVY_SEVERITY }}"
           echo "SARIF results uploaded to GitHub Security tab"
 
@@ -722,7 +722,7 @@ jobs:
         uses: anchore/sbom-action@v0
         with:
           # Image to analyze (use digest for immutable reference)
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
           # SPDX JSON format for maximum compatibility
           format: spdx-json
           # Output file for Cosign signing
@@ -778,7 +778,7 @@ jobs:
           COSIGN_EXPERIMENTAL: false  # keyless signing is GA since v2.0
         run: |
           cosign sign \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }} \
             --yes \
             --annotations "repo=${{ github.repository }}" \
             --annotations "workflow=${{ github.workflow }}" \
@@ -802,7 +802,7 @@ jobs:
           cosign attest-blob \
             ${{ github.event.repository.name }}-sbom.spdx.json \
             --yes \
-            --sign ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+            --sign ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
 
       # -------------------------------------------------------------------------
       # SLSA build provenance attestation
@@ -830,7 +830,7 @@ jobs:
           # Subject name: the OCI image we built
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # Subject digest: the image digest to attest
-          subject-digest: ${{ needs.build-push.outputs.digest }}
+          subject-digest: ${{ needs['build-push'].outputs.digest }}
           # Push attestation to the registry alongside the image
           push-to-registry: true
           # GitHub token for attestation storage
@@ -896,7 +896,7 @@ jobs:
       # -------------------------------------------------------------------------
       - name: Pull image by digest
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
           echo "Successfully pulled image by digest"
 
       # -------------------------------------------------------------------------
@@ -919,10 +919,10 @@ jobs:
       - name: Inspect multi-arch manifest list
         run: |
           echo "=== Manifest List ==="
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
           echo ""
           echo "=== Platform Breakdown ==="
-          docker buildx imagetools inspect --raw ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }} | jq -r '.manifests[] | "  \(.platform.os)/\(.platform.architecture) → \(.digest)"' 2>/dev/null || echo "  (jq not available, raw output above)"
+          docker buildx imagetools inspect --raw ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }} | jq -r '.manifests[] | "  \(.platform.os)/\(.platform.architecture) → \(.digest)"' 2>/dev/null || echo "  (jq not available, raw output above)"
 
       # -------------------------------------------------------------------------
       # Verify Cosign signature
@@ -947,7 +947,7 @@ jobs:
       - name: Verify Cosign signature
         run: |
           cosign verify \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }} \
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/.*@${{ github.ref }}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --verbose
@@ -965,7 +965,7 @@ jobs:
         uses: docker/scout-action@v1
         with:
           command: quickview
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # -------------------------------------------------------------------------
@@ -975,12 +975,12 @@ jobs:
         run: |
           echo "=== Image Verification Summary ==="
           echo "Status: PASSED"
-          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}"
           echo "Signature: Verified (Cosign keyless)"
           echo "Multi-arch: Confirmed"
           echo "Scout check: Passed"
           echo ""
-          echo "Pull command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}"
+          echo "Pull command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}"
 
   # =============================================================================
   # Job 8: release — Create GitHub Release with Artifacts
@@ -1061,7 +1061,7 @@ jobs:
 
             ### Pull by digest (recommended — immutable):
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
             ```
 
             ### Pull by tag:
@@ -1072,7 +1072,7 @@ jobs:
             ### Verify signature:
             ```bash
             cosign verify \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }} \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }} \
               --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/.*@${{ github.ref }}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
             ```
@@ -1090,7 +1090,7 @@ jobs:
             - Workflow: ${{ github.workflow }}
             - Run: ${{ github.run_id }}
             - Commit: ${{ github.sha }}
-            - Digest: ${{ needs.build-push.outputs.digest }}
+            - Digest: ${{ needs['build-push'].outputs.digest }}
           # Files to attach: SBOM, scan results, etc.
           files: |
             release-artifacts/**/*

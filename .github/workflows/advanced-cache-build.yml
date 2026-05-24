@@ -76,10 +76,10 @@ cache-calc:
   runs-on: ubuntu-latest
   # These outputs are consumed by downstream jobs via ${{ needs.cache-calc.outputs.* }}
   outputs:
-    dep-key:     ${{ steps.compute.outputs.dep-key }}
-    build-key:   ${{ steps.compute.outputs.build-key }}
-    docker-key:  ${{ steps.compute.outputs.docker-key }}
-    test-key:    ${{ steps.compute.outputs.test-key }}
+    dep-key:     ${{ steps.compute.outputs['dep-key'] }}
+    build-key:   ${{ steps.compute.outputs['build-key'] }}
+    docker-key:  ${{ steps.compute.outputs['docker-key'] }}
+    test-key:    ${{ steps.compute.outputs['test-key'] }}
   steps:
     # Checkout is required for hashFiles() to operate on the repository content
     - uses: actions/checkout@v4
@@ -144,13 +144,13 @@ deps-install:
         path: node_modules
         # Full key includes node version — different Node builds produce
         # different node_modules (native addons like better-sqlite3)
-        key: ${{ needs.cache-calc.outputs.dep-key }}-${{ matrix.node }}
+        key: ${{ needs['cache-calc'].outputs['dep-key'] }}-${{ matrix.node }}
         # Fallback restore keys (prefix-based partial match):
         #   1. Same OS + lockfile, any node version
         #   2. Same OS only, any lockfile
         # GitHub Actions returns the LATEST written cache matching the prefix
         restore-keys: |
-          ${{ needs.cache-calc.outputs.dep-key }}-
+          ${{ needs['cache-calc'].outputs['dep-key'] }}-
           npm-cache-
 
     # --prefer-offline: use global npm cache first, only fetch missing packages
@@ -288,9 +288,9 @@ build:
       uses: actions/cache/restore@v4
       with:
         path: dist
-        key: ${{ needs.cache-calc.outputs.build-key }}-${{ matrix.node }}
+        key: ${{ needs['cache-calc'].outputs['build-key'] }}-${{ matrix.node }}
         restore-keys: |
-          ${{ needs.cache-calc.outputs.build-key }}-
+          ${{ needs['cache-calc'].outputs['build-key'] }}-
 
     # npm run build compiles TypeScript and bundles with Vite
     # (defined in package.json as: npm run build:web && tsc && cp -r ...)
@@ -465,7 +465,7 @@ cache-warm:
       uses: actions/cache/save@v4
       with:
         path: node_modules
-        key: ${{ needs.cache-calc.outputs.dep-key }}-${{ env.NODE_VERSION }}
+        key: ${{ needs['cache-calc'].outputs['dep-key'] }}-${{ env.NODE_VERSION }}
 
     # Also prime the build cache by running the build and saving dist/
     - name: Build project
@@ -475,4 +475,4 @@ cache-warm:
       uses: actions/cache/save@v4
       with:
         path: dist
-        key: ${{ needs.cache-calc.outputs.build-key }}-${{ env.NODE_VERSION }}
+        key: ${{ needs['cache-calc'].outputs['build-key'] }}-${{ env.NODE_VERSION }}
