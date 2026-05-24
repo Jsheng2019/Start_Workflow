@@ -771,7 +771,7 @@ jobs:
           COSIGN_EXPERIMENTAL: false  # keyless signing is GA since v2.0
         run: |
           cosign sign \
-            ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }} \
+            ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }} \
             --yes \
             --annotations "repo=${{ github.repository }}" \
             --annotations "workflow=${{ github.workflow }}" \
@@ -795,7 +795,7 @@ jobs:
           cosign attest-blob \
             ${{ github.event.repository.name }}-sbom.spdx.json \
             --yes \
-            --sign ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
+            --sign ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }}
 
       # -------------------------------------------------------------------------
       # SLSA build provenance attestation
