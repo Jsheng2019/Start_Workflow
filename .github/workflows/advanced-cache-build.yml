@@ -325,11 +325,11 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         # 2 shards per node+os combination = 2x coverage without 2x wall clock
         shard: [1, 2]
-      # Exclude windows + node 18: reduces CI costs while still testing the
-      # most important combinations (win+20, win+22, all ubuntu combos)
-      exclude:
-        - os: windows-latest
-          node: 18
+        # Exclude windows + node 18: reduces CI costs while still testing the
+        # most important combinations (win+20, win+22, all ubuntu combos)
+        exclude:
+          - os: windows-latest
+            node: 18
       # Don't cancel all runners when one fails — we want signal from every combo
       fail-fast: false
     steps:
