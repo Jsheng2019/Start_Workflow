@@ -1,4 +1,4 @@
-name: Test Debug 9
+name: Test Debug 10
 
 on:
   push:
@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
 
 env:
-  TEST_VAR: ${{ github.repository }}
+  NODE_VERSION: 20
 
 jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Repo: ${{ env.TEST_VAR }}"
+      - run: echo "Node: ${{ env.NODE_VERSION }}"
