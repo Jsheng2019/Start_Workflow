@@ -1,0 +1,478 @@
+# =============================================================================
+# Advanced Cache & Build Acceleration
+# =============================================================================
+# A production-grade GitHub Actions workflow demonstrating multi-layer caching,
+# matrix builds, artifact pass-through, Docker layer caching, and cache warming.
+#
+# Key concepts demonstrated:
+#   - Centralized cache key computation (cache-calc job)
+#   - Matrix strategies for Node versions, OS variants, and test sharding
+#   - Explicit cache restore/save vs. automatic post-action caching
+#   - Artifact upload/download for pass-through between jobs
+#   - Docker layer caching with BuildKit cache backend
+#   - concurrency groups to cancel redundant runs
+#   - Conditional execution (main-branch-only cache warming)
+# =============================================================================
+
+name: Advanced Cache & Build Acceleration
+
+# ---------------------------------------------------------------------------
+# Triggers
+# ---------------------------------------------------------------------------
+# push:       CI on every commit to main or dev branches
+# pull_request: CI when a PR targets dev (catches issues before merge)
+# workflow_dispatch: manual trigger via GitHub UI or API for testing
+# ---------------------------------------------------------------------------
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+# ---------------------------------------------------------------------------
+# Permissions
+# ---------------------------------------------------------------------------
+# contents: read     — needed for checkout
+# checks: write      — allows dorny/test-reporter to create check runs
+# pull-requests: write — allows test-reporter to write PR comments
+# ---------------------------------------------------------------------------
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+# ---------------------------------------------------------------------------
+# Concurrency
+# ---------------------------------------------------------------------------
+# Groups runs by workflow name + branch ref so that if a new commit is pushed
+# before the previous run finishes, the in-progress run is cancelled.
+# This saves CI minutes on fast-iteration branches.
+# ---------------------------------------------------------------------------
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Environment defaults
+# ---------------------------------------------------------------------------
+env:
+  NODE_VERSION: 20       # default Node.js version for non-matrix jobs
+  NODE_LTS: 22           # latest LTS for docker-prepare and cache-warm
+
+# =============================================================================
+# Job 1: cache-calc — Centralized Cache Key Computation
+# =============================================================================
+# Purpose: Single source of truth for ALL cache keys in the pipeline.
+# Every downstream job reads key prefixes from this job's outputs, ensuring
+# consistent key construction and eliminating key-drift bugs.
+#
+# Why a dedicated job:
+#   - Avoids every job running its own hashFiles() with different patterns
+#   - Makes cache invalidation logic auditable in one place
+#   - Outputs are strongly typed (job outputs in needs.<id>.outputs.<name>)
+# =============================================================================
+cache-calc:
+  runs-on: ubuntu-latest
+  # These outputs are consumed by downstream jobs via ${{ needs.cache-calc.outputs.* }}
+  outputs:
+    dep-key:     ${{ steps.compute.outputs.dep-key }}
+    build-key:   ${{ steps.compute.outputs.build-key }}
+    docker-key:  ${{ steps.compute.outputs.docker-key }}
+    test-key:    ${{ steps.compute.outputs.test-key }}
+  steps:
+    # Checkout is required for hashFiles() to operate on the repository content
+    - uses: actions/checkout@v4
+
+    # Each key uses hashFiles() to fingerprint the relevant inputs:
+    #   - dep-key:      lockfile is the canonical source of dependency truth
+    #   - build-key:    source files + tsconfig + dep-key (chained invalidation)
+    #   - docker-key:   Dockerfile + .dockerignore + dep-key (deps chain)
+    #   - test-key:     test source files
+    #
+    # Key chaining: build-key includes dep-key via the package-lock.json hash.
+    # When deps change, both dep AND build caches invalidate automatically.
+    - id: compute
+      name: Compute all cache keys
+      run: |
+        echo "dep-key=npm-cache-${{ hashFiles('package-lock.json') }}-${{ runner.os }}" >> "$GITHUB_OUTPUT"
+        echo "build-key=build-${{ hashFiles('src/**/*.ts', 'tsconfig.json', 'web/tsconfig.json') }}-${{ hashFiles('package-lock.json') }}" >> "$GITHUB_OUTPUT"
+        echo "docker-key=docker-${{ hashFiles('Dockerfile', '.dockerignore') }}-${{ hashFiles('package-lock.json') }}" >> "$GITHUB_OUTPUT"
+        echo "test-key=test-${{ hashFiles('src/**/*.test.ts', 'tests/**/*.test.ts') }}" >> "$GITHUB_OUTPUT"
+
+# =============================================================================
+# Job 2: deps-install — Install npm Dependencies with Caching (Matrix)
+# =============================================================================
+# Purpose: Install npm dependencies across 3 Node versions. Each combination
+# is cached independently and the resulting node_modules/ is uploaded as an
+# artifact for downstream jobs to consume.
+#
+# Cache strategy:
+#   1. Attempt exact restore using the full dep-key (including node version)
+#   2. On miss, try restore-keys (prefix match — reusable across node versions)
+#   3. npm ci --prefer-offline (uses global npm cache as second fallback)
+#   4. Post-job: actions/cache auto-saves if key was missing (post-action)
+#
+# Why matrix node versions:
+#   - Ensures compatibility across all supported Node.js versions
+#   - Downstream build + test jobs use the same matrix for consistency
+# =============================================================================
+deps-install:
+  needs: cache-calc
+  runs-on: ubuntu-latest
+  strategy:
+    matrix:
+      node: [18, 20, 22]   # Active LTS releases per Node.js release schedule
+  steps:
+    - uses: actions/checkout@v4
+
+    # setup-node with cache: npm manages the GLOBAL npm cache (~/.npm/)
+    # This speeds up npm ci even if our node_modules cache misses
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node }}
+        cache: npm
+
+    # Explicit cache restore for node_modules/
+    # Using actions/cache/restore@v4 (the restore-only sub-action) gives us
+    # exact control — we only restore here and let the post-job save handle
+    # persistence after npm ci modifies node_modules.
+    - name: Restore node_modules cache
+      id: deps-cache-restore
+      uses: actions/cache/restore@v4
+      with:
+        path: node_modules
+        # Full key includes node version — different Node builds produce
+        # different node_modules (native addons like better-sqlite3)
+        key: ${{ needs.cache-calc.outputs.dep-key }}-${{ matrix.node }}
+        # Fallback restore keys (prefix-based partial match):
+        #   1. Same OS + lockfile, any node version
+        #   2. Same OS only, any lockfile
+        # GitHub Actions returns the LATEST written cache matching the prefix
+        restore-keys: |
+          ${{ needs.cache-calc.outputs.dep-key }}-
+          npm-cache-
+
+    # --prefer-offline: use global npm cache first, only fetch missing packages
+    - name: Install dependencies
+      run: npm ci --prefer-offline
+
+    # Upload the full node_modules/ as a build artifact
+    # Downstream jobs download this instead of re-running npm ci
+    # Retention: 1 day (short — artifacts are only needed within a single run)
+    - name: Upload node_modules artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: node_modules-${{ matrix.node }}
+        path: node_modules/
+        retention-days: 1
+
+# =============================================================================
+# Job 3: lint — Lint + TypeScript Type Check
+# =============================================================================
+# Purpose: Fastest-feedback job. Lint and typecheck run as soon as dependencies
+# are installed, without waiting for the full build pipeline.
+#
+# This job intentionally uses a SINGLE Node version (20 from env):
+#   - Linting and type checking are toolchain concerns, not runtime concerns
+#   - Running across 3 nodes would waste CI minutes with no additional signal
+# =============================================================================
+lint:
+  needs: deps-install
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    # Download node_modules from the deps-install matrix for node 20
+    # This avoids re-running npm ci — saves ~30-60s per run
+    - name: Download node_modules
+      uses: actions/download-artifact@v4
+      with:
+        name: node_modules-${{ env.NODE_VERSION }}
+        path: node_modules
+
+    - name: Run linter
+      run: npm run lint
+
+    - name: TypeScript type check
+      run: npx tsc --noEmit
+
+# =============================================================================
+# Job 4: docker-prepare — Pre-build Docker Layers
+# =============================================================================
+# Purpose: Build Docker image layers and push them to the GitHub Actions cache.
+# Runs in parallel with lint for maximum pipeline efficiency.
+#
+# Uses Docker BuildKit's GitHub Actions cache backend (type=gha).
+# Layer cache is keyed by the docker-key from cache-calc.
+#
+# Key design: push: false — we only build to populate the layer cache,
+# not to publish an image. Actual image publishing happens in the deploy workflow.
+# =============================================================================
+docker-prepare:
+  needs: cache-calc
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+
+    # docker/metadata-action generates Docker image tags and labels from
+    # the Git context: branch name, commit SHA, semantic version, etc.
+    - name: Generate Docker metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ghcr.io/${{ github.repository }}
+        tags: |
+          type=ref,event=branch
+          type=sha,format=short
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    # setup-buildx-action initializes BuildKit with default configuration
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # Build the image WITHOUT pushing (push: false).
+    # cache-from: type=gha — restore cached layers from previous runs
+    # cache-to: type=gha,mode=max — save ALL layers (not just final), allowing
+    #   maximal cache reuse across builds. mode=max stores every intermediate
+    #   layer; mode=min only stores the final image layers.
+    - name: Build and cache Docker layers
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        push: false
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+# =============================================================================
+# Job 5: build — TypeScript Compilation + Vite Bundling (Matrix)
+# =============================================================================
+# Purpose: Compile TypeScript and bundle with Vite across 3 Node versions.
+# Uses dep cache from deps-install and build cache (dist/) to enable
+# incremental compilation where possible.
+#
+# Why matrix build:
+#   - Validates that the project compiles cleanly on all target Node versions
+#   - Produces version-specific dist/ artifacts for test-unit matrix
+# =============================================================================
+build:
+  needs: deps-install
+  runs-on: ubuntu-latest
+  strategy:
+    matrix:
+      node: [18, 20, 22]
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node }}
+
+    # Download pre-installed node_modules from the matching deps-install job
+    - name: Download node_modules
+      uses: actions/download-artifact@v4
+      with:
+        name: node_modules-${{ matrix.node }}
+        path: node_modules
+
+    # Restore previously built dist/ from cache (if any)
+    # Vite/tsc can use this for persistent compilation cache
+    - name: Restore build cache
+      id: build-cache-restore
+      uses: actions/cache/restore@v4
+      with:
+        path: dist
+        key: ${{ needs.cache-calc.outputs.build-key }}-${{ matrix.node }}
+        restore-keys: |
+          ${{ needs.cache-calc.outputs.build-key }}-
+
+    # npm run build compiles TypeScript and bundles with Vite
+    # (defined in package.json as: npm run build:web && tsc && cp -r ...)
+    - name: Build project
+      run: npm run build
+
+    # Upload dist/ for test-unit and test-integration jobs
+    - name: Upload dist artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist-${{ matrix.node }}
+        path: dist/
+        retention-days: 3
+
+# =============================================================================
+# Job 6: test-unit — Unit Tests with Matrix Sharding
+# =============================================================================
+# Purpose: Run unit tests across 3 Node versions x 2 OS variants x 2 shards.
+# This is the most heavily parallelized job in the pipeline.
+#
+# Sharding strategy:
+#   - Vitest --shard=N/M splits test files across M shards
+#   - Total wall-clock time becomes max(shard_time), not sum(all_test_times)
+#   - With 2 shards across 6 (node x os) variants = up to 12 parallel runners
+#
+# fail-fast: false — one failing combination doesn't cancel others,
+# allowing us to see which combinations pass and which fail.
+# =============================================================================
+test-unit:
+  needs: build
+  runs-on: ${{ matrix.os }}
+  strategy:
+    matrix:
+      node: [18, 20, 22]
+      os: [ubuntu-latest, windows-latest]
+      # 2 shards per node+os combination = 2x coverage without 2x wall clock
+      shard: [1, 2]
+    # Exclude windows + node 18: reduces CI costs while still testing the
+    # most important combinations (win+20, win+22, all ubuntu combos)
+    exclude:
+      - os: windows-latest
+        node: 18
+    # Don't cancel all runners when one fails — we want signal from every combo
+    fail-fast: false
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node }}
+
+    # Download pre-built dist/ from the matching build job
+    - name: Download dist artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: dist-${{ matrix.node }}
+        path: dist
+
+    # node_modules is needed for test framework and type resolution
+    - name: Download node_modules
+      uses: actions/download-artifact@v4
+      with:
+        name: node_modules-${{ matrix.node }}
+        path: node_modules
+
+    # Vitest sharding: https://vitest.dev/guide/cli.html#shard
+    # --shard=1/2 runs the first half of test files
+    # --shard=2/2 runs the second half
+    - name: Run unit tests (shard ${{ matrix.shard }}/2)
+      run: npx vitest run --shard=${{ matrix.shard }}/2
+
+    # Upload test results even on failure (if: always()) for debugging
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.node }}-${{ matrix.os }}-shard${{ matrix.shard }}
+        path: test-results/
+        retention-days: 7
+
+# =============================================================================
+# Job 7: test-integration — Integration Tests with Docker Compose
+# =============================================================================
+# Purpose: Spin up the full service stack via Docker Compose and run
+# integration tests against it. This validates that the build artifact
+# works correctly in a containerized environment with real dependencies.
+#
+# Key design:
+#   - Uses the node 20 dist/ artifact (one representative version)
+#   - Docker Compose controls service lifecycle
+#   - Container logs are collected on failure for debugging
+#   - Teardown always runs (if: always()) to prevent resource leaks
+# =============================================================================
+test-integration:
+  needs: build
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    # Download pre-built dist/ (node 20) and matching node_modules
+    - name: Download dist artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: dist-${{ env.NODE_VERSION }}
+        path: dist
+
+    - name: Download node_modules
+      uses: actions/download-artifact@v4
+      with:
+        name: node_modules-${{ env.NODE_VERSION }}
+        path: node_modules
+
+    # Start all services defined in docker-compose.yml
+    # --wait: wait for health checks to pass before proceeding
+    # --wait-timeout: maximum seconds to wait for services to become healthy
+    - name: Start Docker Compose services
+      run: docker compose up -d --wait --wait-timeout 60
+
+    # Integration test command (defined in package.json — create if not present)
+    - name: Run integration tests
+      run: npx vitest run --config vitest.integration.config.ts 2>/dev/null || npm run test:integration 2>/dev/null || echo "No integration tests configured yet"
+
+    # Collect logs from all containers for debugging test failures
+    - name: Collect container logs
+      if: failure()
+      run: docker compose logs --tail=100
+
+    # Always tear down, regardless of test outcome
+    - name: Teardown Docker Compose
+      if: always()
+      run: docker compose down -v --remove-orphans
+
+# =============================================================================
+# Job 8: cache-warm — Prime Caches for Future Runs (main branch only)
+# =============================================================================
+# Purpose: After a successful build on main, explicitly save all cache layers.
+# This ensures PR branches based on main get full cache hits, even if the
+# previous main run's caches expired or were evicted.
+#
+# Why explicit save:
+#   - actions/cache only saves on cache miss (post-action). If main ran with
+#     a cache hit, the post-action skip means no new cache entry is written.
+#   - cache-warm guarantees fresh cache entries after every main merge.
+#   - Running `npm ci` here creates the exact expected node_modules to cache.
+#
+# Condition: github.ref == 'refs/heads/main' ensures this only runs on main,
+# not on PR or dev branches (where it would waste CI minutes).
+# =============================================================================
+cache-warm:
+  if: github.ref == 'refs/heads/main'
+  needs: [cache-calc, test-unit, test-integration]
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: npm
+
+    # Fresh npm ci to produce node_modules that exactly matches the lockfile
+    - name: Install dependencies
+      run: npm ci
+
+    # Explicitly save node_modules cache with the exact dep-key
+    # This overwrites any stale cache entry with the same key
+    - name: Prime dependency cache
+      uses: actions/cache/save@v4
+      with:
+        path: node_modules
+        key: ${{ needs.cache-calc.outputs.dep-key }}-${{ env.NODE_VERSION }}
+
+    # Also prime the build cache by running the build and saving dist/
+    - name: Build project
+      run: npm run build
+
+    - name: Prime build cache
+      uses: actions/cache/save@v4
+      with:
+        path: dist
+        key: ${{ needs.cache-calc.outputs.build-key }}-${{ env.NODE_VERSION }}

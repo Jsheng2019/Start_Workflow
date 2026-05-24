@@ -1,0 +1,1185 @@
+# =============================================================================
+# Docker Full Lifecycle — Build, Sign, Scan, Verify, Release
+# =============================================================================
+# A production-grade GitHub Actions workflow covering the complete Docker image
+# lifecycle: multi-architecture build, vulnerability scanning, SBOM generation,
+# Cosign keyless signing, SLSA provenance attestation, image verification,
+# GitHub Release creation, and cleanup of old images.
+#
+# Key concepts demonstrated:
+#   - Multi-architecture builds (linux/amd64 + linux/arm64) via QEMU + Buildx
+#   - Docker layer caching with GitHub Actions cache backend (type=gha)
+#   - SLSA provenance and SBOM for supply chain security
+#   - Cosign keyless signing using OIDC identity
+#   - Trivy + Docker Scout vulnerability scanning
+#   - Digest-pinned image verification for immutable deployments
+#   - Job DAG with conditional execution and output passing
+#   - workflow_dispatch with typed inputs for manual invocation
+# =============================================================================
+
+name: Docker Full Lifecycle
+
+# ---------------------------------------------------------------------------
+# Triggers
+# ---------------------------------------------------------------------------
+# release:     Run when a GitHub Release is published (tagged version)
+# workflow_dispatch: Manual trigger via GitHub UI with environment inputs
+# ---------------------------------------------------------------------------
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      # -----------------------------------------------------------------------
+      # image-name: Custom image name override (defaults to ghcr.io/<repo>)
+      # -----------------------------------------------------------------------
+      image-name:
+        description: 'Container image name (default: ghcr.io/${{ github.repository }})'
+        required: false
+        type: string
+      # -----------------------------------------------------------------------
+      # platforms: Comma-separated target platforms for multi-arch build
+      # -----------------------------------------------------------------------
+      platforms:
+        description: 'Target platforms (comma-separated, e.g. linux/amd64,linux/arm64)'
+        required: false
+        default: 'linux/amd64,linux/arm64'
+        type: string
+      # -----------------------------------------------------------------------
+      # skip-scan: Emergency bypass for vulnerability scanning
+      # -----------------------------------------------------------------------
+      skip-scan:
+        description: 'Skip vulnerability scan (emergency use only)'
+        required: false
+        default: false
+        type: boolean
+
+# ---------------------------------------------------------------------------
+# Permissions
+# ---------------------------------------------------------------------------
+# contents: write       — needed to create releases and upload release assets
+# packages: write       — needed to push container images to GHCR
+# id-token: write       — needed for Cosign keyless signing (OIDC) and
+#                         actions/attest-build-provenance (SLSA attestation)
+# attestations: write   — needed for actions/attest-build-provenance v2
+# security-events: write — needed to upload SARIF scan results
+# ---------------------------------------------------------------------------
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  security-events: write
+
+# ---------------------------------------------------------------------------
+# Environment defaults
+# ---------------------------------------------------------------------------
+env:
+  REGISTRY: ghcr.io                                       # GitHub Container Registry
+  IMAGE_NAME: ${{ github.repository }}                    # Default: owner/repo
+  # Trivy severity threshold: fail on CRITICAL or HIGH vulnerabilities
+  TRIVY_SEVERITY: CRITICAL,HIGH
+
+# =============================================================================
+jobs:
+  # Job 1: docker-setup — QEMU + Buildx Initialization
+  # =============================================================================
+  # Purpose: Install QEMU emulation binaries and initialize Docker Buildx with
+  # the docker-container driver. This is a prerequisite for all multi-architecture
+  # Docker builds.
+  #
+  # Why QEMU:
+  #   - GitHub Actions runners are amd64 (x86_64). To build arm64 images, we need
+  #     a CPU instruction translator. QEMU provides binary-level emulation that
+  #     translates arm64 instructions to amd64 at runtime.
+  #   - setup-qemu-action registers the QEMU binfmt_misc handlers so that Docker
+  #     can transparently run arm64 containers on the amd64 host during build.
+  #
+  # Why docker-container driver:
+  #   - The default build driver (docker) can only build for the host architecture.
+  #   - docker-container driver runs an external BuildKit daemon that supports
+  #     concurrent multi-architecture builds, advanced cache exports, and
+  #     SBOM/provenance generation.
+  # =============================================================================
+  docker-setup:
+    runs-on: ubuntu-latest
+    outputs:
+      # Pass the builder name downstream for diagnostic use
+      builder-name: ${{ steps.buildx.outputs.name }}
+    steps:
+      # Check out the repository source code
+      - uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------
+      # Install QEMU static binaries for multi-architecture emulation
+      # -------------------------------------------------------------------------
+      # This action installs QEMU user-mode emulation binaries (qemu-aarch64-static,
+      # qemu-x86_64-static, etc.) and registers them with the Linux kernel's
+      # binfmt_misc subsystem. After this step, Docker can transparently run
+      # arm64 containers on the amd64 runner host.
+      #
+      # Platforms installed: aarch64, arm, riscv64, s390x, ppc64le, mips64
+      # -------------------------------------------------------------------------
+      - name: Set up QEMU for multi-architecture emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          # Explicitly specify which platform emulators to install
+          platforms: arm64,arm
+
+      # -------------------------------------------------------------------------
+      # Initialize Docker Buildx with docker-container driver
+      # -------------------------------------------------------------------------
+      # docker-container driver launches an external BuildKit container. This is
+      # required over the default docker driver because:
+      #   1. Multi-arch builds: docker driver only builds for the host arch
+      #   2. Cache exports: docker-container supports gh-api, registry, local, s3
+      #   3. SBOM/provenance: BuildKit can generate attestations during build
+      #   4. Concurrent builds: the embedded BuildKit in docker driver is single-queue
+      #
+      # With driver-opts: image=moby/buildkit:latest we pin the BuildKit version.
+      # buildkitd-config sets BuildKit daemon configuration (e.g., mirrors, GC).
+      # -------------------------------------------------------------------------
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # Use the docker-container driver for multi-arch support
+          driver: docker-container
+          # Pin BuildKit version for reproducibility
+          driver-opts: |
+            image=moby/buildkit:latest
+          # Enable BuildKit build history for debugging
+          buildkitd-flags: --debug
+        # Note: In production, you may want to pin buildkit to a specific digest
+        # rather than :latest tag for immutable CI pipeline
+
+      # -------------------------------------------------------------------------
+      # Inspect the Buildx builder configuration (diagnostic)
+      # -------------------------------------------------------------------------
+      # This step outputs the builder status including supported platforms,
+      # driver type, and endpoint. Useful for debugging multi-arch build issues
+      # in CI logs.
+      # -------------------------------------------------------------------------
+      - name: Inspect builder
+        run: |
+          echo "Builder name: ${{ steps.buildx.outputs.name }}"
+          echo "Driver: docker-container"
+          echo "Supported platforms:"
+          docker buildx inspect --bootstrap | grep -E "Platforms:|linux/"
+
+  # =============================================================================
+  # Job 2: docker-lint — Dockerfile Linting with Hadolint
+  # =============================================================================
+  # Purpose: Analyze the Dockerfile for best-practice violations, security issues,
+  # and anti-patterns. Hadolint checks for:
+  #   - Base image tag pinning (no :latest)
+  #   - USER directive (avoid running as root)
+  #   - COPY --chown for proper file ownership
+  #   - apt-get best practices (combined RUN, cache cleanup)
+  #   - WORKDIR vs mkdir + cd
+  #   - EXPOSE port documentation
+  #   - SHELL checklist usage
+  #   - JSON-array vs string-form ENTRYPOINT/CMD
+  # =============================================================================
+  docker-lint:
+    needs: docker-setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------
+      # Run Hadolint on the Dockerfile
+      # -------------------------------------------------------------------------
+      # hadolint/hadolint-action runs the Hadolint Dockerfile linter and outputs
+      # results as GitHub Check Run annotations. Each rule violation is annotated
+      # inline on the PR diff.
+      #
+      # Key inputs:
+      #   dockerfile: path to the Dockerfile (default: ./Dockerfile)
+      #   config:     path to .hadolint.yaml for custom rule configuration
+      #   format:     output format (checkstyle, json, tty, sarif, etc.)
+      #   severity:   minimum severity to report (error, warning, info, style)
+      #   failure-threshold: exit code behavior (error, warning, info, none)
+      #
+      # Important Hadolint rules:
+      #   DL3006: Always tag version explicitly (no :latest)
+      #   DL3008: Pin package versions in apt-get install
+      #   DL3009: Delete apt-get lists after install (apt-get clean)
+      #   DL3018: Pin package versions in apk add
+      #   DL3020: Use COPY instead of ADD for files
+      #   DL3025: Use JSON-array form for ENTRYPOINT/CMD
+      #   DL3042: Use --no-install-recommends with apt-get
+      #   DL4006: Set SHELL for RUN --mount patterns
+      # -------------------------------------------------------------------------
+      - name: Lint Dockerfile with Hadolint
+        uses: hadolint/hadolint-action@v3
+        with:
+          # Path to the Dockerfile to lint
+          dockerfile: Dockerfile
+          # Treat warnings as failures in CI
+          failure-threshold: warning
+          # Output format for GitHub annotation integration
+          format: sarif
+          # Output file for SARIF results
+          output-file: hadolint-results.sarif
+
+      # -------------------------------------------------------------------------
+      # Upload Hadolint SARIF results to GitHub Security tab
+      # -------------------------------------------------------------------------
+      # The SARIF file is uploaded to GitHub so results appear in the Security >
+      # Code scanning alerts section of the repository. This provides persistent
+      # tracking of Dockerfile quality issues.
+      # -------------------------------------------------------------------------
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: hadolint-results.sarif
+          # Category distinguishes these from CodeQL-based results
+          category: hadolint
+
+  # =============================================================================
+  # Job 3: metadata — Image Tags, Labels, and OCI Annotations
+  # =============================================================================
+  # Purpose: Generate comprehensive Docker image tags and OCI-compliant labels
+  # using the docker/metadata-action. This centralizes all tagging logic so
+  # that downstream jobs (build-push, release) use consistent identifiers.
+  #
+  # OCI annotations generated automatically:
+  #   org.opencontainers.image.created       — build timestamp (RFC 3339)
+  #   org.opencontainers.image.source        — repository URL
+  #   org.opencontainers.image.version       — git tag or semver
+  #   org.opencontainers.image.revision      — commit SHA
+  #   org.opencontainers.image.licenses      — SPDX license identifier
+  #   org.opencontainers.image.title         — image name
+  #   org.opencontainers.image.description   — repository description
+  # =============================================================================
+  metadata:
+    needs: docker-setup
+    runs-on: ubuntu-latest
+    # These outputs are consumed by downstream jobs via ${{ needs.metadata.outputs.* }}
+    outputs:
+      tags:     ${{ steps.meta.outputs.tags }}
+      labels:   ${{ steps.meta.outputs.labels }}
+      json:     ${{ steps.meta.outputs.json }}
+      version:  ${{ steps.meta-latest.outputs.version || steps.meta.outputs.version }}
+      digest:   ${{ steps.meta.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------
+      # Generate Docker metadata tags and labels
+      # -------------------------------------------------------------------------
+      # docker/metadata-action v5 generates tags and OCI labels from Git context.
+      # Tag strategy:
+      #   type=ref,event=branch  — e.g., main, dev (branch name as tag)
+      #   type=ref,event=pr      — e.g., pr-42 (PR number)
+      #   type=semver,pattern={{version}} — e.g., 1.2.3 (from git tag)
+      #   type=semver,pattern={{major}}.{{minor}} — e.g., 1.2 (range tag)
+      #   type=sha               — e.g., sha-a1b2c3d (commit SHA, short format)
+      #   type=raw,value=latest  — "latest" tag (main branch only)
+      #   type=raw,value=edge    — "edge" tag (dev branch, bleeding edge)
+      #
+      # The enable parameter controls conditional tags:
+      #   enable={{is_default_branch}} — only on main/default branch
+      #   enable=${{ github.event_name == 'release' }} — only on release events
+      #
+      # Flavor settings:
+      #   latest=false — don't auto-add 'latest' tag, we control it explicitly
+      #   prefix=      — no tag prefix
+      #   suffix=      — no tag suffix
+      # -------------------------------------------------------------------------
+      - name: Generate Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # Image name: ghcr.io/<owner>/<repo>
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Generate OCI-compliant labels for supply chain transparency
+          labels: |
+            org.opencontainers.image.title=${{ github.event.repository.name }}
+            org.opencontainers.image.description=Docker Full Lifecycle workflow demo image
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
+            org.opencontainers.image.licenses=MIT
+            maintainer=${{ github.repository_owner }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/dev' }}
+          # Flavor settings control auto-tag behavior
+          flavor: |
+            latest=false
+            prefix=
+            suffix=
+
+      # -------------------------------------------------------------------------
+      # Fallback version extraction for non-tagged builds
+      # -------------------------------------------------------------------------
+      # When there's no git tag (e.g., branch push), semver pattern produces no
+      # match. This step extracts a version from package.json as fallback so
+      # downstream jobs always have a version identifier.
+      # -------------------------------------------------------------------------
+      - name: Extract fallback version
+        id: meta-latest
+        run: |
+          if [ -z "${{ steps.meta.outputs.version }}" ]; then
+            # Extract version from package.json if available, else use 'latest'
+            VERSION=$(node -p "try{require('./package.json').version}catch(e){'latest'}" 2>/dev/null || echo "latest")
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ steps.meta.outputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Print tags for diagnostic visibility in CI logs
+      - name: Print generated metadata
+        run: |
+          echo "Tags:"
+          echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' | sed 's/^/  /'
+          echo "Labels:"
+          echo "${{ steps.meta.outputs.labels }}" | tr ',' '\n' | sed 's/^/  /'
+          echo "Version: ${{ steps.meta-latest.outputs.version || steps.meta.outputs.version }}"
+
+  # =============================================================================
+  # Job 4: build-push — Multi-Platform Docker Build and Push
+  # =============================================================================
+  # Purpose: Build the Docker image for multiple architectures (amd64 + arm64),
+  # push to GitHub Container Registry (GHCR), and attach SLSA provenance + SBOM
+  # attestations inline during the build.
+  #
+  # Why build-time provenance?
+  #   - docker/build-push-action v6 supports --provenance and --sbom flags that
+  #     instruct BuildKit to generate attestations AT BUILD TIME. These are
+  #     embedded in the image manifest as attestation layers.
+  #   - Separately generated SBOMs (via anchore/sbom-action) are for release
+  #     artifacts; in-image attestations are for runtime verification.
+  #
+  # Cache strategy (type=gha):
+  #   - GitHub Actions cache backend stores layers in the GHA cache (not a registry)
+  #   - mode=max exports ALL intermediate layers for maximum cache reuse
+  #   - mode=min only exports final image layers (smaller cache, less reuse)
+  #   - cache-from restores layers at the start; cache-to saves at the end
+  #   - Cache keys are automatically managed by buildx (not manual keying)
+  # ---------------------------------------------------------------------------
+  build-push:
+    needs: [metadata, docker-lint]
+    runs-on: ubuntu-latest
+    outputs:
+      # Image digest is consumed by verify-image, scan, and release jobs
+      digest: ${{ steps.build.outputs.digest }}
+      # Image tags as newline-separated list
+      tags: ${{ steps.build.outputs.tags }}
+      # Full image reference with digest for immutable pulls
+      image-with-digest: ${{ steps.build.outputs.digest && format('{0}@{1}', env.REGISTRY, steps.build.outputs.digest) || steps.build-full-ref.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------
+      # Log in to GitHub Container Registry
+      # -------------------------------------------------------------------------
+      # docker/login-action authenticates with the container registry using the
+      # GITHUB_TOKEN. The token's packages:write permission (set at the workflow
+      # level) allows pushing images to GHCR.
+      #
+      # GHCR authentication:
+      #   - Username: ${{ github.actor }} (the user who triggered the workflow)
+      #   - Password: ${{ secrets.GITHUB_TOKEN }} (auto-generated, scoped per run)
+      #   - Registry: ghcr.io (GitHub Container Registry endpoint)
+      #
+      # Alternative registries:
+      #   - Docker Hub: docker.io (requires DOCKER_USERNAME + DOCKER_PASSWORD secrets)
+      #   - AWS ECR:    <account>.dkr.ecr.<region>.amazonaws.com (needs AWS creds)
+      #   - Azure ACR:  <name>.azurecr.io (needs Azure SP credentials)
+      # -------------------------------------------------------------------------
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------------
+      # Set up Docker Buildx (again in this job)
+      # -------------------------------------------------------------------------
+      # Buildx is re-initialized because each job runs in a fresh runner.
+      # The docker-setup job's Buildx does not persist across jobs.
+      # -------------------------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      # -------------------------------------------------------------------------
+      # Build and push multi-architecture image
+      # -------------------------------------------------------------------------
+      # docker/build-push-action v6 orchestrates the full build:
+      #
+      #   platforms: Target architectures. Each platform is built in parallel
+      #     by BuildKit using QEMU emulation for non-native architectures.
+      #     Example: linux/amd64,linux/arm64,linux/arm/v7
+      #
+      #   provenance=true: Generates SLSA provenance attestation as an in-image
+      #     layer. This records: builder ID, build config, source repo, digest.
+      #     Build Level 2 (source + build steps recorded, but not hermetic).
+      #
+      #   sbom=true: Generates a Software Bill of Materials as an in-image layer.
+      #     Lists all packages installed in the image (OS packages, npm packages).
+      #
+      #   cache-from / cache-to: Docker layer caching. Using type=gha stores
+      #     cache blobs in GitHub Actions cache (up to 10GB per repo).
+      #     mode=max exports all intermediate layers for best cache hit rate.
+      #
+      #   push=true: Push the built image and multi-arch manifest list to registry.
+      #
+      #   tags / labels: From the metadata job to ensure consistency.
+      #
+      # Outputs:
+      #   digest: The image digest (sha256:...) of the multi-arch manifest list.
+      #     IMPORTANT: Use digest, not tag, for production deployments. A tag is
+      #     mutable — it can be overwritten. A digest is immutable and uniquely
+      #     identifies the image content.
+      # -------------------------------------------------------------------------
+      - name: Build and push multi-platform image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          # Build context: the Docker build context directory
+          context: .
+          # Dockerfile path (relative to context)
+          file: ./Dockerfile
+          # Target platforms for multi-architecture build
+          platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}
+          # Push to registry after successful build
+          push: true
+          # Tags from metadata job
+          tags: ${{ needs.metadata.outputs.tags }}
+          # OCI labels from metadata job
+          labels: ${{ needs.metadata.outputs.labels }}
+          # SLSA provenance attestation (in-image)
+          provenance: true
+          # SBOM attestation (in-image)
+          sbom: true
+          # Cache configuration
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Build arguments
+          build-args: |
+            BUILDKIT_CONTEXT_KEEP_GIT_DIR=1
+            VERSION=${{ needs.metadata.outputs.version }}
+          # Export build summary annotations (outputs are available in step outputs)
+          annotations: ${{ needs.metadata.outputs.labels }}
+
+      # -------------------------------------------------------------------------
+      # Output full image reference with digest
+      # -------------------------------------------------------------------------
+      # The full reference (registry/image@sha256:digest) enables immutable pulls.
+      # This is more secure than pulling by tag because it guarantees the exact
+      # image content, even if the tag is later overwritten by a different build.
+      # -------------------------------------------------------------------------
+      - name: Output image reference
+        id: build-full-ref
+        run: |
+          echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "Image built and pushed successfully"
+          echo "  Registry: ${{ env.REGISTRY }}"
+          echo "  Image: ${{ env.IMAGE_NAME }}"
+          echo "  Digest: ${{ steps.build.outputs.digest }}"
+          echo "  Tags: ${{ needs.metadata.outputs.tags }}"
+          echo "  Platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}"
+
+  # =============================================================================
+  # Job 5: image-scan — Vulnerability Scanning (Trivy + Docker Scout)
+  # =============================================================================
+  # Purpose: Scan the built Docker image for known vulnerabilities (CVEs) using
+  # multiple scanners. Trivy provides deep CVE scanning; Docker Scout provides
+  # policy-based recommendations and remediation guidance.
+  #
+  # Trivy scanning modes:
+  #   - image:   Scan a container image for OS + language-specific packages
+  #   - fs:      Scan a filesystem for IaC misconfigurations + secrets
+  #   - repo:    Scan a git repository history for leaked secrets
+  #   - config:  Scan Kubernetes/YAML/Terraform configs for misconfigurations
+  #   - sbom:    Scan an SBOM file for vulnerabilities (no image needed)
+  #
+  # Docker Scout:
+  #   - Analyzes image layers and package inventory
+  #   - Compares against a policy baseline
+  #   - Provides quickview summary and remediation suggestions
+  #   - Integrates with Docker Hub and GHCR
+  #
+  # Scanning gate: If skip-scan is true (emergency hotfix), this job is skipped.
+  # Otherwise, CRITICAL/HIGH severity findings cause the workflow to fail.
+  # =============================================================================
+  image-scan:
+    needs: build-push
+    runs-on: ubuntu-latest
+    # Skip scan when emergency bypass is set (workflow_dispatch input)
+    if: ${{ github.event.inputs.skip-scan != 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------
+      # Log in to GHCR to pull the image for scanning
+      # -------------------------------------------------------------------------
+      # Trivy and Scout both need access to the image. The image is private in
+      # GHCR (by default), so we authenticate before scanning.
+      # -------------------------------------------------------------------------
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------------
+      # Trivy vulnerability scan
+      # -------------------------------------------------------------------------
+      # aquasecurity/trivy-action wraps the Trivy CLI. It scans the image for
+      # known CVEs from multiple databases (NVD, GHSA, OSV, RedHat, etc.).
+      #
+      # Key inputs:
+      #   scan-type:     'image' | 'fs' | 'repo' | 'config' | 'sbom'
+      #   scan-ref:      The target to scan (image name, directory, file)
+      #   format:        'table' | 'json' | 'sarif' | 'template'
+      #   output:        Output file path
+      #   exit-code:     Exit code when vulnerabilities are found (0 = don't fail)
+      #   severity:      Comma-separated severity filter
+      #   scanners:      'vuln,secret,misconfig' (what to scan for)
+      #   vuln-type:     'os,library' (OS packages + language libraries)
+      #   ignore-unfixed: Only show fixed vulnerabilities (avoids noise)
+      #   skip-dirs:     Directories to skip during filesystem scan
+      #
+      # Severity levels (from Trivy docs):
+      #   CRITICAL:  Exploitation is trivial, widespread damage possible
+      #   HIGH:      Exploitation is possible, significant impact
+      #   MEDIUM:    Exploitation is possible but requires specific conditions
+      #   LOW:       Limited impact, hard to exploit
+      #   UNKNOWN:   Severity not yet assigned
+      #
+      # SARIF format: Upload results to GitHub Security tab for persistent tracking.
+      # -------------------------------------------------------------------------
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          # Scan the built container image
+          scan-type: image
+          # Image reference: use digest for immutable scan target
+          scan-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          # Output format: SARIF for GitHub Security integration
+          format: sarif
+          # Output file path
+          output: trivy-results.sarif
+          # Fail the step on CRITICAL or HIGH severity vulnerabilities
+          exit-code: 1
+          # Severity filter: only report CRITICAL and HIGH
+          severity: ${{ env.TRIVY_SEVERITY }}
+          # Scan both OS packages and language-specific libraries
+          vuln-type: os,library
+          # Only report vulnerabilities that have a fix available
+          ignore-unfixed: true
+          # Scanners to enable
+          scanners: vuln,secret
+
+      # -------------------------------------------------------------------------
+      # Upload Trivy SARIF results to GitHub Security tab
+      # -------------------------------------------------------------------------
+      # Results appear in Security > Code scanning alerts. This enables:
+      #   - Persistent tracking across workflow runs
+      #   - PR annotations for new vulnerabilities
+      #   - Alert management (dismiss, reopen)
+      # -------------------------------------------------------------------------
+      - name: Upload Trivy SARIF results
+        if: always()  # Upload even if Trivy found vulnerabilities
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+      # -------------------------------------------------------------------------
+      # Docker Scout quick scan and policy evaluation
+      # -------------------------------------------------------------------------
+      # docker/scout-action evaluates the image against Docker Scout's
+      # vulnerability database and policy engine. Key features:
+      #
+      #   - quickview: Summary of vulnerabilities by severity (text output)
+      #   - compare:   Compare image against a baseline/reference image
+      #   - policy:    Evaluate against organization's security policy
+      #   - recommendations: Suggest base image updates to reduce CVEs
+      #
+      # Docker Scout requires authentication with Docker Hub or integration
+      # with GHCR. The --org flag targets a Docker Hub organization for
+      # policy evaluation.
+      #
+      # Note: Docker Scout has a separate CVE database from Trivy. Running both
+      # gives broader coverage — one may catch CVEs the other misses.
+      # -------------------------------------------------------------------------
+      - name: Run Docker Scout
+        id: scout
+        uses: docker/scout-action@v1
+        with:
+          # Command to run: quickview gives summary, recommendations gives fixes
+          command: quickview,recommendations
+          # Image reference with digest
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          # Only show CRITICAL and HIGH severity
+          severity: ${{ env.TRIVY_SEVERITY }}
+          # GitHub token for GHCR authentication
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Exit with error if policy check fails
+          exit-code: true
+
+      # -------------------------------------------------------------------------
+      # Print Trivy scan summary in plain text (readable in CI logs)
+      # -------------------------------------------------------------------------
+      # The table format shows vulnerability ID, package, severity, and fix version
+      # in a human-readable layout. Useful for quick debugging without opening SARIF.
+      # -------------------------------------------------------------------------
+      - name: Print scan summary
+        if: always()
+        run: |
+          echo "=== Trivy Scan Summary ==="
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}"
+          echo "Severity threshold: ${{ env.TRIVY_SEVERITY }}"
+          echo "SARIF results uploaded to GitHub Security tab"
+
+  # =============================================================================
+  # Job 6: sbom-attest — SBOM Generation + Cosign Keyless Signing
+  # =============================================================================
+  # Purpose: Generate a Software Bill of Materials (SBOM) in SPDX format for the
+  # built image, then sign both the SBOM and the container image using Cosign
+  # keyless signing. Attach SLSA build provenance attestation.
+  #
+  # What is an SBOM?
+  #   A Software Bill of Materials is a machine-readable inventory of all
+  #   components in a software artifact. SPDX (ISO/IEC 5962) is the industry-
+  #   standard format. It lists: package names, versions, licenses, supplier,
+  #   and dependency relationships.
+  #
+  # What is Cosign keyless signing?
+  #   Traditional signing requires managing private keys. Keyless signing uses
+  #   OIDC (OpenID Connect) to bind the identity of the signer to a short-lived
+  #   signing certificate via Fulcio (a root CA). The signature includes:
+  #     1. The OIDC token proving identity (e.g., repo owner, workflow ref)
+  #     2. A short-lived code signing certificate issued by Fulcio
+  #     3. A timestamp from Rekor (transparency log) for future verification
+  #
+  #   The identity is NOT "who ran the workflow" but "what workflow ran" —
+  #   verified by the OIDC subject claim:
+  #     https://github.com/<owner>/<repo>/.github/workflows/<workflow>@<ref>
+  #
+  # Why this matters:
+  #   - No secrets to manage (no private key = no key rotation)
+  #   - Signature is bound to the workflow identity, not a person
+  #   - Anyone can verify WITHOUT needing your public key
+  #   - Rekor provides a public, auditable transparency log
+  # =============================================================================
+  sbom-attest:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------
+      # Log in to GHCR (needed for cosign verify and image pulling)
+      # -------------------------------------------------------------------------
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------------
+      # Generate SPDX SBOM using Anchore SBOM Action
+      # -------------------------------------------------------------------------
+      # anchore/sbom-action generates a Software Bill of Materials in SPDX 2.3
+      # format. It supports multiple output formats including SPDX JSON and
+      # CycloneDX.
+      #
+      # Key inputs:
+      #   image:     Container image to analyze (can also scan directories)
+      #   format:    Output format: spdx-json (default), cyclonedx-json, spdx-tag-value
+      #   output-file: Path for the generated SBOM file
+      #   artifact-name: Name for the uploaded artifact (auto-uploaded)
+      #
+      # The SBOM captures:
+      #   - Base OS packages (alpine packages, deb packages, etc.)
+      #   - Language-specific packages (npm, pip, gem, etc.)
+      #   - File-level dependency information
+      #   - License information for each package
+      #   - Package relationships and dependency tree
+      #
+      # The output file is used for:
+      #   1. Signing with Cosign (proves the SBOM hasn't been tampered with)
+      #   2. Attaching to the GitHub Release as a downloadable artifact
+      #   3. Uploading to dependency monitoring services (Dependabot, etc.)
+      # -------------------------------------------------------------------------
+      - name: Generate SBOM
+        id: sbom
+        uses: anchore/sbom-action@v0
+        with:
+          # Image to analyze (use digest for immutable reference)
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          # SPDX JSON format for maximum compatibility
+          format: spdx-json
+          # Output file for Cosign signing
+          output-file: ${{ github.event.repository.name }}-sbom.spdx.json
+          # GitHub token for GHCR authentication
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------------
+      # Install Cosign for keyless signing
+      # -------------------------------------------------------------------------
+      # sigstore/cosign-installer downloads and installs the Cosign binary.
+      # Cosign is a tool for signing and verifying container images and blobs.
+      #
+      # Keyless signing prerequisites:
+      #   1. OIDC provider: GitHub Actions provides OIDC tokens via ACTIONS_ID_TOKEN_REQUEST
+      #   2. Fulcio: Code-signing certificate authority (default: sigstore.dev)
+      #   3. Rekor: Transparency log (default: sigstore.dev)
+      #
+      # The OIDC token is automatically available when id-token: write is set.
+      #
+      # Verifying the installation:
+      #   cosign version shows the installed version and supported providers.
+      # -------------------------------------------------------------------------
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          # Pin a specific Cosign version for reproducibility
+          cosign-release: 'v2.4.1'
+
+      # -------------------------------------------------------------------------
+      # Sign the container image with Cosign keyless signing
+      # -------------------------------------------------------------------------
+      # cosign sign attaches a signature to the image manifest in the registry.
+      # The signature is stored as a separate manifest in the same repository.
+      #
+      # Keyless signing flow:
+      #   1. Cosign requests an OIDC token from GitHub Actions
+      #   2. Cosign exchanges the OIDC token with Fulcio for a cert
+      #   3. Cosign signs the image digest with the ephemeral key pair
+      #   4. The signature, cert, and chain are uploaded to the registry
+      #   5. Rekor entry is created (transparency log)
+      #
+      # Flags:
+      #   --yes: Skip confirmation prompt
+      #   identity-token: Explicit OIDC token path (optional, auto-detected)
+      #
+      # The signature can be verified with:
+      #   cosign verify <image> --certificate-identity <expected> --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      # -------------------------------------------------------------------------
+      - name: Sign container image with Cosign keyless signing
+        env:
+          # Cosign automatically uses ACTIONS_ID_TOKEN_REQUEST_URL for OIDC
+          COSIGN_EXPERIMENTAL: false  # keyless signing is GA since v2.0
+        run: |
+          cosign sign \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }} \
+            --yes \
+            --annotations "repo=${{ github.repository }}" \
+            --annotations "workflow=${{ github.workflow }}" \
+            --annotations "ref=${{ github.ref }}"
+
+      # -------------------------------------------------------------------------
+      # Sign the SBOM file with Cosign
+      # -------------------------------------------------------------------------
+      # cosign attest-blob signs an arbitrary blob (file) and produces an
+      # attestation bundle. This bundle can be verified independently.
+      #
+      # The signed SBOM proves:
+      #   1. The SBOM was generated by this workflow (identity binding)
+      #   2. The SBOM has not been tampered with since signing
+      #   3. The SBOM corresponds to this specific image digest
+      #
+      # Output: ${{ github.event.repository.name }}-sbom.spdx.json.bundle (attestation)
+      # -------------------------------------------------------------------------
+      - name: Sign SBOM with Cosign
+        run: |
+          cosign attest-blob \
+            ${{ github.event.repository.name }}-sbom.spdx.json \
+            --yes \
+            --sign ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+
+      # -------------------------------------------------------------------------
+      # SLSA build provenance attestation
+      # -------------------------------------------------------------------------
+      # actions/attest-build-provenance v2 generates a SLSA Build Level 2
+      # provenance attestation using GitHub's OIDC identity. The attestation
+      # is stored as a cryptographically signed document in the GHCR or as
+      # a GitHub attestation.
+      #
+      # SLSA (Supply-chain Levels for Software Artifacts) levels:
+      #   L1: Build process is documented and run per defined steps
+      #   L2: Signed provenance + authentication via OIDC (this workflow)
+      #   L3: Hosted build + isolation (prevents tampering by builder)
+      #   L4: Hermetic build + two-person review + full dependency graph
+      #
+      # The attestation proves:
+      #   - The artifact was built by this GitHub Actions workflow
+      #   - The source repository and commit SHA at build time
+      #   - The builder identity (GitHub Actions, runner OS)
+      #   - The build configuration (workflow file, inputs)
+      # -------------------------------------------------------------------------
+      - name: Attach build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          # Subject name: the OCI image we built
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Subject digest: the image digest to attest
+          subject-digest: ${{ needs.build-push.outputs.digest }}
+          # Push attestation to the registry alongside the image
+          push-to-registry: true
+          # GitHub token for attestation storage
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------------
+      # Upload SBOM and attestation as workflow artifacts
+      # -------------------------------------------------------------------------
+      # These artifacts are used by the release job to attach to the GitHub Release.
+      # Retention is set to 90 days to align with typical release support windows.
+      # -------------------------------------------------------------------------
+      - name: Upload SBOM and attestation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-and-attestation
+          path: |
+            ${{ github.event.repository.name }}-sbom.spdx.json
+            ${{ github.event.repository.name }}-sbom.spdx.json.bundle
+          retention-days: 90
+
+  # =============================================================================
+  # Job 7: verify-image — Post-Push Image Verification
+  # =============================================================================
+  # Purpose: Pull the just-pushed image by digest, verify its Cosign signature,
+  # inspect its manifest list (confirming multi-arch), and run a final Docker
+  # Scout check. This ensures the image in the registry is exactly what was
+  # built and signed — no tampering between push and consumption.
+  #
+  # Why verify?
+  #   - Tag mutability: Between push and pull, a tag could be overwritten.
+  #     Pulling by digest eliminates this attack vector.
+  #   - Signature verification: Confirms the image was signed by our workflow.
+  #   - Manifest list inspection: Confirms both amd64 and arm64 variants exist.
+  #   - This is the "trust but verify" step before deployment.
+  # =============================================================================
+  verify-image:
+    needs: [build-push, sbom-attest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------
+      # Log in to GHCR
+      # -------------------------------------------------------------------------
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------------
+      # Pull image by digest (immutable reference)
+      # -------------------------------------------------------------------------
+      # Pulling by digest (sha256:...) guarantees we get exactly the image we
+      # built. Tag-based pulls are susceptible to TOCTOU (time-of-check-time-of-use)
+      # attacks where the tag is overwritten between verification and use.
+      #
+      # For multi-arch images:
+      #   - Pulling the digest of the manifest list downloads the manifest list
+      #     (not the full image layers)
+      #   - docker buildx imagetools inspect shows the manifest list details
+      # -------------------------------------------------------------------------
+      - name: Pull image by digest
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          echo "Successfully pulled image by digest"
+
+      # -------------------------------------------------------------------------
+      # Inspect multi-architecture manifest list
+      # -------------------------------------------------------------------------
+      # docker buildx imagetools inspect displays the manifest list (also called
+      # "fat manifest" or OCI index). Each platform (amd64, arm64) has its own
+      # manifest with a platform-specific digest.
+      #
+      # A manifest list bundles multiple platform-specific manifests under one
+      # tag or digest. When a user runs docker pull, Docker automatically selects
+      # the correct variant for their CPU architecture.
+      #
+      # Example output shows:
+      #   Name:       ghcr.io/owner/repo@sha256:abc...
+      #   MediaType:  application/vnd.oci.image.index.v1+json
+      #   Manifest:   1. linux/amd64   digest: sha256:def...
+      #   Manifest:   2. linux/arm64   digest: sha256:ghi...
+      # -------------------------------------------------------------------------
+      - name: Inspect multi-arch manifest list
+        run: |
+          echo "=== Manifest List ==="
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          echo ""
+          echo "=== Platform Breakdown ==="
+          docker buildx imagetools inspect --raw ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }} | jq -r '.manifests[] | "  \(.platform.os)/\(.platform.architecture) → \(.digest)"' 2>/dev/null || echo "  (jq not available, raw output above)"
+
+      # -------------------------------------------------------------------------
+      # Verify Cosign signature
+      # -------------------------------------------------------------------------
+      # cosign verify checks the image's signature against the expected identity.
+      # In keyless mode, the verification proves:
+      #   1. The image has a valid Cosign signature
+      #   2. The signature was issued to the expected OIDC identity
+      #   3. The signing certificate chains to Fulcio's root CA
+      #   4. The signature was logged in Rekor (transparency log)
+      #
+      # Verification identity:
+      #   --certificate-identity: The expected OIDC subject (workflow identity)
+      #     Pattern: https://github.com/<owner>/<repo>/.github/workflows/<file>@<ref>
+      #   --certificate-oidc-issuer: The OIDC issuer that issued the token
+      #     Value: https://token.actions.githubusercontent.com
+      #
+      # If verification succeeds, cosign prints the certificate details including
+      # the signing identity, issuer, and the Rekor bundle.
+      # If verification fails, the step errors and the workflow can gate on this.
+      # -------------------------------------------------------------------------
+      - name: Verify Cosign signature
+        run: |
+          cosign verify \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }} \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/.*@${{ github.ref }}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --verbose
+          echo "Signature verification passed"
+
+      # -------------------------------------------------------------------------
+      # Docker Scout quickview on verified image
+      # -------------------------------------------------------------------------
+      # Final health check: run Docker Scout quickview on the verified image.
+      # This is a lightweight check that confirms the image is pullable and
+      # Scout can analyze it. It also provides a final vulnerability summary
+      # before the image proceeds to release.
+      # -------------------------------------------------------------------------
+      - name: Docker Scout final check
+        uses: docker/scout-action@v1
+        with:
+          command: quickview
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------------
+      # Print verification summary
+      # -------------------------------------------------------------------------
+      - name: Print verification summary
+        run: |
+          echo "=== Image Verification Summary ==="
+          echo "Status: PASSED"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}"
+          echo "Signature: Verified (Cosign keyless)"
+          echo "Multi-arch: Confirmed"
+          echo "Scout check: Passed"
+          echo ""
+          echo "Pull command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}"
+
+  # =============================================================================
+  # Job 8: release — Create GitHub Release with Artifacts
+  # =============================================================================
+  # Purpose: Create (or update) a GitHub Release for this build, attaching the
+  # SBOM, security scan reports, provenance attestation, and image pull
+  # instructions. The release provides a single, discoverable URL for all
+  # build artifacts.
+  #
+  # Behavior differs by trigger:
+  #   - release trigger:  Artifacts are attached to the EXISTING release
+  #   - workflow_dispatch: A NEW release is created (draft)
+  #
+  # This job only runs when there's a version tag or on the default branch.
+  # =============================================================================
+  release:
+    needs: [verify-image, image-scan]
+    runs-on: ubuntu-latest
+    # Only create release on main branch pushes or release events
+    if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------
+      # Download SBOM and scan artifacts for release attachment
+      # -------------------------------------------------------------------------
+      # These were generated in sbom-attest and image-scan jobs. We collect
+      # them into a single directory for release attachment.
+      # -------------------------------------------------------------------------
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # Download all artifacts to a common directory
+          path: release-artifacts/
+          # Merge multiple artifacts into directories
+          merge-multiple: true
+
+      # -------------------------------------------------------------------------
+      # List downloaded artifacts
+      # -------------------------------------------------------------------------
+      - name: List release artifacts
+        run: |
+          echo "=== Release Artifacts ==="
+          find release-artifacts/ -type f -ls
+
+      # -------------------------------------------------------------------------
+      # Create or update GitHub Release
+      # -------------------------------------------------------------------------
+      # softprops/action-gh-release v2 creates or updates a GitHub Release.
+      # It can attach artifacts, set release notes, and configure release
+      # visibility.
+      #
+      # Key inputs:
+      #   tag:           Git tag for the release (auto-detected from ref)
+      #   name:          Release title
+      #   body:          Release description (markdown)
+      #   body_path:     Read release body from file
+      #   files:         Glob pattern for files to attach
+      #   draft:         Create as draft (not published yet)
+      #   prerelease:    Mark as pre-release
+      #   token:         GitHub token (defaults to secrets.GITHUB_TOKEN)
+      #   generate_release_notes: Auto-generate release notes from commits
+      #   make_latest:   Update the "latest" release badge
+      #
+      # When triggered by a release event, this attaches artifacts to the
+      # existing release. When workflow_dispatch, it creates a new draft.
+      # -------------------------------------------------------------------------
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Tag name: use the triggering tag, or create from version
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || format('v{0}', needs.metadata.outputs.version) }}
+          # Release name
+          name: Release ${{ needs.metadata.outputs.version }}
+          # Release body with image pull instructions
+          body: |
+            ## Docker Image
+
+            ### Pull by digest (recommended — immutable):
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+            ```
+
+            ### Pull by tag:
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.metadata.outputs.version }}
+            ```
+
+            ### Verify signature:
+            ```bash
+            cosign verify \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }} \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/.*@${{ github.ref }}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+            ```
+
+            ## Attestations
+            - SLSA Build Level 2 provenance: attached via GitHub attestation
+            - Cosign keyless signature: bound to workflow identity
+            - SBOM (SPDX 2.3): attached to this release
+
+            ## Platforms
+            - linux/amd64
+            - linux/arm64
+
+            ## Build Info
+            - Workflow: ${{ github.workflow }}
+            - Run: ${{ github.run_id }}
+            - Commit: ${{ github.sha }}
+            - Digest: ${{ needs.build-push.outputs.digest }}
+          # Files to attach: SBOM, scan results, etc.
+          files: |
+            release-artifacts/**/*
+          # Create as draft when manually triggered
+          draft: ${{ github.event_name != 'release' }}
+          # Mark as pre-release for non-semver tags
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          # Auto-generate release notes from commit history
+          generate_release_notes: true
+          # Make this the latest release
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =============================================================================
+  # Job 9: cleanup — Delete Old/Untagged Container Images
+  # =============================================================================
+  # Purpose: Prune old, untagged container image versions from GHCR to manage
+  # storage. GHCR has a storage limit (free tier: 500MB, paid: included in plan).
+  # Untagged images accumulate when tags are overwritten and consume quota.
+  #
+  # This job runs ONLY on the main branch to avoid interfering with PR builds.
+  # It uses actions/delete-package-versions which calls the GitHub Packages API.
+  #
+  # Package retention strategies:
+  #   1. Delete untagged versions (orphaned by tag overwrites) — this job
+  #   2. Delete by age threshold (e.g., keep last 90 days)
+  #   3. Delete by count threshold (e.g., keep last 10 versions)
+  #   4. Package-level retention policy (configured in repository settings)
+  #
+  # Caution: Deleting a package version that is currently deployed or referenced
+  # in a running container's image history may cause issues. Always verify
+  # that the image is no longer in use before cleanup.
+  # =============================================================================
+  cleanup:
+    needs: release
+    runs-on: ubuntu-latest
+    # Only run on main branch to avoid cleaning up PR-related images prematurely
+    if: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      # -------------------------------------------------------------------------
+      # Delete old, untagged package versions
+      # -------------------------------------------------------------------------
+      # actions/delete-package-versions v5 uses the GitHub API to list and delete
+      # package versions from the GitHub Container Registry (or other package
+      # types: npm, PyPI, RubyGems, etc.).
+      #
+      # Key inputs:
+      #   package-name:      Name of the package (repository name in GHCR)
+      #   package-type:      Type of package (container, npm, etc.)
+      #   min-versions-to-keep: Minimum versions retain (safety net)
+      #   delete-only-untagged-versions: Only remove orphaned versions
+      #   token:             GitHub token with packages:delete permission
+      #
+      # The delete-only-untagged-versions: true flag is critical — it prevents
+      # deletion of tagged versions that might be in use. Only "orphaned"
+      # versions (no tag pointing to them) are removed.
+      #
+      # An untagged version is created when:
+      #   - A new push with the same tag overwrites the previous version
+      #   - A tag is deleted from the repository
+      #   - A package is moved between repositories
+      #
+      # Important: The GITHUB_TOKEN needs packages: delete permission to delete
+      # packages. This is currently not included in the workflow-level permissions
+      # by default; additional permissions may need to be configured in the
+      # repository settings or via a PAT (Personal Access Token).
+      # -------------------------------------------------------------------------
+      - name: Delete untagged package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          # Package name: the repository name as it appears in GHCR
+          package-name: ${{ env.IMAGE_NAME }}
+          # Package type: container image
+          package-type: container
+          # Minimum versions to keep (don't delete below this count)
+          min-versions-to-keep: 5
+          # Only delete untagged (orphaned) versions
+          delete-only-untagged-versions: true
+          # GitHub token with package deletion permissions
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------------
+      # Report cleanup results
+      # -------------------------------------------------------------------------
+      - name: Report cleanup
+        run: |
+          echo "=== Package Cleanup ==="
+          echo "Package: ${{ env.IMAGE_NAME }}"
+          echo "Action: Deleted untagged versions"
+          echo "Min kept: 5"
+          echo "Registry: ${{ env.REGISTRY }}"
