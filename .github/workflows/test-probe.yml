@@ -1,4 +1,4 @@
-name: Test Probe 4
+name: Test Probe 5
 
 on:
   push:
@@ -9,10 +9,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: github/codeql-action/upload-sarif@v3
         with:
-          path: node_modules
-          key: npm-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            npm-
-      - run: echo "cache test complete"
+          sarif_file: results.sarif
