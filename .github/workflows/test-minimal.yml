@@ -1,13 +1,33 @@
-name: Test Minimal
+name: Test Debug
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 20
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   hello:
     runs-on: ubuntu-latest
+    outputs:
+      test-out: ${{ steps.compute.outputs.result }}
     steps:
-      - name: Hello
-        run: echo "Hello World"
+      - uses: actions/checkout@v4
+      - id: compute
+        run: |
+          echo "result=test-${{ hashFiles('package.json') }}" >> "$GITHUB_OUTPUT"
+          
+  consumer:
+    needs: hello
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Got: ${{ needs.hello.outputs['test-out'] }}"
