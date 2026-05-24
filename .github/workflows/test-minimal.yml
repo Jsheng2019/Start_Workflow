@@ -1,14 +1,14 @@
-name: Test Debug 14
+name: Test Debug 15
 
 on:
   push:
     branches: [main]
 
 env:
-  FOO: bar
+  COUNT: 20
 
 jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "prefix ${{ env.FOO }}"
+      - run: echo ${{ env.COUNT }}
