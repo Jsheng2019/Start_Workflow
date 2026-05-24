@@ -1,4 +1,4 @@
-name: Test Debug 2
+name: Test Debug 3
 
 on:
   push:
@@ -13,7 +13,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  hello:
+  first:
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.gen.outputs.value }}
+    steps:
+      - id: gen
+        run: echo "value=success" >> "$GITHUB_OUTPUT"
+
+  second:
+    needs: first
     runs-on: ubuntu-latest
     steps:
-      - run: echo "hello"
+      - run: echo "Got: ${{ needs.first.outputs.result }}"
