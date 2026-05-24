@@ -154,6 +154,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline
 
+      # Ensure node_modules/ exists even for projects with no dependencies,
+      # otherwise upload-artifact skips the empty directory and downstream
+      # download-artifact steps fail with "Artifact not found".
+      - name: Ensure node_modules exists
+        run: mkdir -p node_modules && touch node_modules/.keep
+
       # Upload the full node_modules/ as a build artifact
       # Downstream jobs download this instead of re-running npm ci
       # Retention: 1 day (short — artifacts are only needed within a single run)
@@ -196,6 +202,7 @@ jobs:
         run: npm run lint
 
       - name: TypeScript type check
+        if: hashFiles('tsconfig.json') != ''
         run: npx tsc --noEmit
 
   # =============================================================================
