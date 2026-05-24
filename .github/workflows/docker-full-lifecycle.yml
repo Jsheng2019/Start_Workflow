@@ -704,12 +704,18 @@ jobs:
       #   2. Attaching to the GitHub Release as a downloadable artifact
       #   3. Uploading to dependency monitoring services (Dependabot, etc.)
       # -------------------------------------------------------------------------
+      # GHCR normalizes repository names to lowercase. Compute the correct
+      # lowercase image reference so syft can find the pushed image.
+      - name: Compute lowercase image reference
+        id: image-ref
+        run: echo "ref=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Generate SBOM
         id: sbom
         uses: anchore/sbom-action@v0
         with:
           # Image to analyze (use digest for immutable reference)
-          image: ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
+          image: ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }}
           # SPDX JSON format for maximum compatibility
           format: spdx-json
           # Output file for Cosign signing
