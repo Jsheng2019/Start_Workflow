@@ -1,4 +1,4 @@
-name: Test Debug 11
+name: Test Debug 12
 
 on:
   push:
@@ -11,4 +11,4 @@ jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "hello"
+      - run: echo ${{ env.FOO }}
