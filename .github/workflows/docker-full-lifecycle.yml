@@ -820,8 +820,8 @@ jobs:
       - name: Attach build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          # Subject name: the OCI image we built
-          subject-name: ghcr.io/${{ github.repository }}
+          # Subject name: the OCI image we built (lowercased for GHCR)
+          subject-name: ${{ steps.image-ref.outputs.ref }}
           # Subject digest: the image digest to attest
           subject-digest: ${{ needs['build-push'].outputs.digest }}
           # Push attestation to the registry alongside the image
@@ -875,6 +875,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Compute lowercase image reference so cosign verify finds the image
+      - name: Compute lowercase image reference
+        id: image-ref
+        run: echo "ref=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       # -------------------------------------------------------------------------
       # Pull image by digest (immutable reference)
       # -------------------------------------------------------------------------
@@ -889,7 +894,7 @@ jobs:
       # -------------------------------------------------------------------------
       - name: Pull image by digest
         run: |
-          docker pull ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
+          docker pull ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }}
           echo "Successfully pulled image by digest"
 
       # -------------------------------------------------------------------------
@@ -912,10 +917,10 @@ jobs:
       - name: Inspect multi-arch manifest list
         run: |
           echo "=== Manifest List ==="
-          docker buildx imagetools inspect ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
+          docker buildx imagetools inspect ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }}
           echo ""
           echo "=== Platform Breakdown ==="
-          docker buildx imagetools inspect --raw ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }} | jq -r '.manifests[] | "  \(.platform.os)/\(.platform.architecture) → \(.digest)"' 2>/dev/null || echo "  (jq not available, raw output above)"
+          docker buildx imagetools inspect --raw ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }} | jq -r '.manifests[] | "  \(.platform.os)/\(.platform.architecture) → \(.digest)"' 2>/dev/null || echo "  (jq not available, raw output above)"
 
       # -------------------------------------------------------------------------
       # Verify Cosign signature
@@ -940,7 +945,7 @@ jobs:
       - name: Verify Cosign signature
         run: |
           cosign verify \
-            ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }} \
+            ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }} \
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/.*@${{ github.ref }}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --verbose
@@ -958,7 +963,7 @@ jobs:
         uses: docker/scout-action@v1
         with:
           command: quickview
-          image: ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
+          image: ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # -------------------------------------------------------------------------
@@ -968,12 +973,12 @@ jobs:
         run: |
           echo "=== Image Verification Summary ==="
           echo "Status: PASSED"
-          echo "Image: ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}"
+          echo "Image: ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }}"
           echo "Signature: Verified (Cosign keyless)"
           echo "Multi-arch: Confirmed"
           echo "Scout check: Passed"
           echo ""
-          echo "Pull command: docker pull ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}"
+          echo "Pull command: docker pull ${{ steps.image-ref.outputs.ref }}@${{ needs['build-push'].outputs.digest }}"
 
   # =============================================================================
   # Job 8: release — Create GitHub Release with Artifacts
