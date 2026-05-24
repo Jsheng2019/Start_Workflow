@@ -1,17 +1,9 @@
-name: Test Debug 8
+name: Test Debug 9
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      test-input:
-        description: 'Test input with expression ${{ github.repository }}'
-        required: false
-        type: string
-
-permissions:
-  contents: read
 
 env:
   TEST_VAR: ${{ github.repository }}
