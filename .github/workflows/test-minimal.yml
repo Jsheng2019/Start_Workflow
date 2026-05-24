@@ -1,14 +1,14 @@
-name: Test Debug 15
+name: Test Debug 16
 
 on:
   push:
     branches: [main]
 
 env:
-  COUNT: 20
+  VERSION: 20
 
 jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-      - run: echo ${{ env.COUNT }}
+      - run: echo "Node: ${{ env.VERSION }}"
