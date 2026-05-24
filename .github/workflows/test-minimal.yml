@@ -1,14 +1,14 @@
-name: Test Debug 13
+name: Test Debug 14
 
 on:
   push:
     branches: [main]
 
 env:
-  NODE_VERSION: 20
+  FOO: bar
 
 jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Node: ${{ env.NODE_VERSION }}"
+      - run: echo "prefix ${{ env.FOO }}"
