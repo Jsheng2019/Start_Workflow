@@ -129,12 +129,12 @@ deps-install:
         cache: npm
 
     # Explicit cache restore for node_modules/
-    # Using actions/cache/restore@v4 (the restore-only sub-action) gives us
+    # Using actions/cache@v4 (the restore-only sub-action) gives us
     # exact control — we only restore here and let the post-job save handle
     # persistence after npm ci modifies node_modules.
     - name: Restore node_modules cache
       id: deps-cache-restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache@v4
       with:
         path: node_modules
         # Full key includes node version — different Node builds produce
@@ -280,7 +280,7 @@ build:
     # Vite/tsc can use this for persistent compilation cache
     - name: Restore build cache
       id: build-cache-restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache@v4
       with:
         path: dist
         key: ${{ needs['cache-calc'].outputs['build-key'] }}-${{ matrix.node }}
@@ -457,7 +457,7 @@ cache-warm:
     # Explicitly save node_modules cache with the exact dep-key
     # This overwrites any stale cache entry with the same key
     - name: Prime dependency cache
-      uses: actions/cache/save@v4
+      uses: actions/cache@v4
       with:
         path: node_modules
         key: ${{ needs['cache-calc'].outputs['dep-key'] }}-20
@@ -467,7 +467,7 @@ cache-warm:
       run: npm run build
 
     - name: Prime build cache
-      uses: actions/cache/save@v4
+      uses: actions/cache@v4
       with:
         path: dist
         key: ${{ needs['cache-calc'].outputs['build-key'] }}-20
