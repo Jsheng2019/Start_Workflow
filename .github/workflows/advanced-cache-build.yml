@@ -364,9 +364,11 @@ jobs:
       # Vitest sharding: https://vitest.dev/guide/cli.html#shard
       # --shard=1/2 runs the first half of test files
       # --shard=2/2 runs the second half
-      # Falls back to npm test if vitest is not configured
+      # Falls back to npm test if vitest is not configured.
+      # Cross-platform: use node -e to detect and run available test runner.
       - name: Run unit tests (shard ${{ matrix.shard }}/2)
-        run: npx vitest run --shard=${{ matrix.shard }}/2 2>/dev/null || npm test 2>/dev/null || echo "No tests configured — skipping"
+        run: node -e "try { require('vitest') } catch(e) { process.exit(1) }" 2>/dev/null && npx vitest run --shard=${{ matrix.shard }}/2 || npm test || echo "No tests configured — skipping"
+        shell: bash
 
       # Upload test results even on failure (if: always()) for debugging
       - name: Upload test results
