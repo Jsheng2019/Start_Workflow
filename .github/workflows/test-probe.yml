@@ -1,0 +1,36 @@
+name: Test Probe Final
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  first:
+    runs-on: ubuntu-latest
+    outputs:
+      mykey: ${{ steps.gen.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gen
+        run: echo "value=hash-${{ hashFiles('package.json') }}" >> "$GITHUB_OUTPUT"
+
+  second:
+    needs: first
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: echo ${{ needs.first.outputs.mykey }}
