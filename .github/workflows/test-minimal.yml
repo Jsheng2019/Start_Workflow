@@ -1,4 +1,4 @@
-name: Test Debug 16
+name: Test Debug 17
 
 on:
   push:
@@ -11,4 +11,4 @@ jobs:
   hello:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Node: ${{ env.VERSION }}"
+      - run: echo ${{ env.VERSION }}
