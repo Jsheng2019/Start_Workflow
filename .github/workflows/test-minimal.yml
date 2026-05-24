@@ -1,15 +1,23 @@
-name: Test Debug 7
+name: Test Debug 8
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      test-input:
+        description: 'Test input with expression ${{ github.repository }}'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TEST_VAR: ${{ github.repository }}
 
 jobs:
-  first:
+  hello:
     runs-on: ubuntu-latest
-    outputs:
-      result: ${{ steps.gen.outputs.value }}
     steps:
-      - id: gen
-        run: echo "value=hello" >> "$GITHUB_OUTPUT"
+      - run: echo "Repo: ${{ env.TEST_VAR }}"
