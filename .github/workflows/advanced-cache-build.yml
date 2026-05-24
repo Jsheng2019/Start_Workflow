@@ -54,11 +54,6 @@ concurrency:
   cancel-in-progress: true
 
 # ---------------------------------------------------------------------------
-# Environment defaults
-# ---------------------------------------------------------------------------
-env:
-  NODE_VERSION: 20       # default Node.js version for non-matrix jobs
-  NODE_LTS: 22           # latest LTS for docker-prepare and cache-warm
 
 # =============================================================================
 # Job 1: cache-calc — Centralized Cache Key Computation
@@ -185,14 +180,14 @@ lint:
 
     - uses: actions/setup-node@v4
       with:
-        node-version: ${{ env.NODE_VERSION }}
+        node-version: 20
 
     # Download node_modules from the deps-install matrix for node 20
     # This avoids re-running npm ci — saves ~30-60s per run
     - name: Download node_modules
       uses: actions/download-artifact@v4
       with:
-        name: node_modules-${{ env.NODE_VERSION }}
+        name: node_modules-20
         path: node_modules
 
     - name: Run linter
@@ -392,19 +387,19 @@ test-integration:
 
     - uses: actions/setup-node@v4
       with:
-        node-version: ${{ env.NODE_VERSION }}
+        node-version: 20
 
     # Download pre-built dist/ (node 20) and matching node_modules
     - name: Download dist artifact
       uses: actions/download-artifact@v4
       with:
-        name: dist-${{ env.NODE_VERSION }}
+        name: dist-20
         path: dist
 
     - name: Download node_modules
       uses: actions/download-artifact@v4
       with:
-        name: node_modules-${{ env.NODE_VERSION }}
+        name: node_modules-20
         path: node_modules
 
     # Start all services defined in docker-compose.yml
@@ -452,7 +447,7 @@ cache-warm:
 
     - uses: actions/setup-node@v4
       with:
-        node-version: ${{ env.NODE_VERSION }}
+        node-version: 20
         cache: npm
 
     # Fresh npm ci to produce node_modules that exactly matches the lockfile
@@ -465,7 +460,7 @@ cache-warm:
       uses: actions/cache/save@v4
       with:
         path: node_modules
-        key: ${{ needs['cache-calc'].outputs['dep-key'] }}-${{ env.NODE_VERSION }}
+        key: ${{ needs['cache-calc'].outputs['dep-key'] }}-20
 
     # Also prime the build cache by running the build and saving dist/
     - name: Build project
@@ -475,4 +470,4 @@ cache-warm:
       uses: actions/cache/save@v4
       with:
         path: dist
-        key: ${{ needs['cache-calc'].outputs['build-key'] }}-${{ env.NODE_VERSION }}
+        key: ${{ needs['cache-calc'].outputs['build-key'] }}-20

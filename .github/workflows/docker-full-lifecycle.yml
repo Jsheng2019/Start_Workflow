@@ -71,14 +71,6 @@ permissions:
   attestations: write
   security-events: write
 
-# ---------------------------------------------------------------------------
-# Environment defaults
-# ---------------------------------------------------------------------------
-env:
-  REGISTRY: ghcr.io                                       # GitHub Container Registry
-  IMAGE_NAME: ${{ github.repository }}                    # Default: owner/repo
-  # Trivy severity threshold: fail on CRITICAL or HIGH vulnerabilities
-  TRIVY_SEVERITY: CRITICAL,HIGH
 
 # =============================================================================
 jobs:
@@ -293,7 +285,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           # Image name: ghcr.io/<owner>/<repo>
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ghcr.io/${{ github.repository }}
           # Generate OCI-compliant labels for supply chain transparency
           labels: |
             org.opencontainers.image.title=${{ github.event.repository.name }}
@@ -373,7 +365,7 @@ jobs:
       # Image tags as newline-separated list
       tags: ${{ steps.build.outputs.tags }}
       # Full image reference with digest for immutable pulls
-      image-with-digest: ${{ steps.build.outputs.digest && format('{0}@{1}', env.REGISTRY, steps.build.outputs.digest) || steps.build-full-ref.outputs.ref }}
+      image-with-digest: ${{ steps.build.outputs.digest && format('{0}@{1}', 'ghcr.io', steps.build.outputs.digest) || steps.build-full-ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
 
@@ -397,7 +389,7 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -482,10 +474,10 @@ jobs:
       - name: Output image reference
         id: build-full-ref
         run: |
-          echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "ref=ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
           echo "Image built and pushed successfully"
-          echo "  Registry: ${{ env.REGISTRY }}"
-          echo "  Image: ${{ env.IMAGE_NAME }}"
+          echo "  Registry: ghcr.io"
+          echo "  Image: ${{ github.repository }}"
           echo "  Digest: ${{ steps.build.outputs.digest }}"
           echo "  Tags: ${{ needs.metadata.outputs.tags }}"
           echo "  Platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}"
@@ -530,7 +522,7 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -567,7 +559,7 @@ jobs:
           # Scan the built container image
           scan-type: image
           # Image reference: use digest for immutable scan target
-          scan-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
+          scan-ref: ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
           # Output format: SARIF for GitHub Security integration
           format: sarif
           # Output file path
@@ -575,7 +567,7 @@ jobs:
           # Fail the step on CRITICAL or HIGH severity vulnerabilities
           exit-code: 1
           # Severity filter: only report CRITICAL and HIGH
-          severity: ${{ env.TRIVY_SEVERITY }}
+          severity: CRITICAL,HIGH
           # Scan both OS packages and language-specific libraries
           vuln-type: os,library
           # Only report vulnerabilities that have a fix available
@@ -623,9 +615,9 @@ jobs:
           # Command to run: quickview gives summary, recommendations gives fixes
           command: quickview,recommendations
           # Image reference with digest
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
+          image: ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
           # Only show CRITICAL and HIGH severity
-          severity: ${{ env.TRIVY_SEVERITY }}
+          severity: CRITICAL,HIGH
           # GitHub token for GHCR authentication
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Exit with error if policy check fails
@@ -641,8 +633,8 @@ jobs:
         if: always()
         run: |
           echo "=== Trivy Scan Summary ==="
-          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}"
-          echo "Severity threshold: ${{ env.TRIVY_SEVERITY }}"
+          echo "Image: ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}"
+          echo "Severity threshold: CRITICAL,HIGH"
           echo "SARIF results uploaded to GitHub Security tab"
 
   # =============================================================================
@@ -688,7 +680,7 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -722,7 +714,7 @@ jobs:
         uses: anchore/sbom-action@v0
         with:
           # Image to analyze (use digest for immutable reference)
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
+          image: ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
           # SPDX JSON format for maximum compatibility
           format: spdx-json
           # Output file for Cosign signing
@@ -778,7 +770,7 @@ jobs:
           COSIGN_EXPERIMENTAL: false  # keyless signing is GA since v2.0
         run: |
           cosign sign \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }} \
+            ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }} \
             --yes \
             --annotations "repo=${{ github.repository }}" \
             --annotations "workflow=${{ github.workflow }}" \
@@ -802,7 +794,7 @@ jobs:
           cosign attest-blob \
             ${{ github.event.repository.name }}-sbom.spdx.json \
             --yes \
-            --sign ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
+            --sign ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
 
       # -------------------------------------------------------------------------
       # SLSA build provenance attestation
@@ -828,7 +820,7 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           # Subject name: the OCI image we built
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-name: ghcr.io/${{ github.repository }}
           # Subject digest: the image digest to attest
           subject-digest: ${{ needs['build-push'].outputs.digest }}
           # Push attestation to the registry alongside the image
@@ -878,7 +870,7 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -896,7 +888,7 @@ jobs:
       # -------------------------------------------------------------------------
       - name: Pull image by digest
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
+          docker pull ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
           echo "Successfully pulled image by digest"
 
       # -------------------------------------------------------------------------
@@ -919,10 +911,10 @@ jobs:
       - name: Inspect multi-arch manifest list
         run: |
           echo "=== Manifest List ==="
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
+          docker buildx imagetools inspect ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
           echo ""
           echo "=== Platform Breakdown ==="
-          docker buildx imagetools inspect --raw ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }} | jq -r '.manifests[] | "  \(.platform.os)/\(.platform.architecture) → \(.digest)"' 2>/dev/null || echo "  (jq not available, raw output above)"
+          docker buildx imagetools inspect --raw ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }} | jq -r '.manifests[] | "  \(.platform.os)/\(.platform.architecture) → \(.digest)"' 2>/dev/null || echo "  (jq not available, raw output above)"
 
       # -------------------------------------------------------------------------
       # Verify Cosign signature
@@ -947,7 +939,7 @@ jobs:
       - name: Verify Cosign signature
         run: |
           cosign verify \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }} \
+            ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }} \
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/.*@${{ github.ref }}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --verbose
@@ -965,7 +957,7 @@ jobs:
         uses: docker/scout-action@v1
         with:
           command: quickview
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
+          image: ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # -------------------------------------------------------------------------
@@ -975,12 +967,12 @@ jobs:
         run: |
           echo "=== Image Verification Summary ==="
           echo "Status: PASSED"
-          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}"
+          echo "Image: ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}"
           echo "Signature: Verified (Cosign keyless)"
           echo "Multi-arch: Confirmed"
           echo "Scout check: Passed"
           echo ""
-          echo "Pull command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}"
+          echo "Pull command: docker pull ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}"
 
   # =============================================================================
   # Job 8: release — Create GitHub Release with Artifacts
@@ -1061,18 +1053,18 @@ jobs:
 
             ### Pull by digest (recommended — immutable):
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }}
+            docker pull ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }}
             ```
 
             ### Pull by tag:
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.metadata.outputs.version }}
+            docker pull ghcr.io/${{ github.repository }}:${{ needs.metadata.outputs.version }}
             ```
 
             ### Verify signature:
             ```bash
             cosign verify \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs['build-push'].outputs.digest }} \
+              ghcr.io/${{ github.repository }}@${{ needs['build-push'].outputs.digest }} \
               --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/.*@${{ github.ref }}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
             ```
@@ -1163,7 +1155,7 @@ jobs:
         uses: actions/delete-package-versions@v5
         with:
           # Package name: the repository name as it appears in GHCR
-          package-name: ${{ env.IMAGE_NAME }}
+          package-name: ${{ github.repository }}
           # Package type: container image
           package-type: container
           # Minimum versions to keep (don't delete below this count)
@@ -1179,7 +1171,7 @@ jobs:
       - name: Report cleanup
         run: |
           echo "=== Package Cleanup ==="
-          echo "Package: ${{ env.IMAGE_NAME }}"
+          echo "Package: ${{ github.repository }}"
           echo "Action: Deleted untagged versions"
           echo "Min kept: 5"
-          echo "Registry: ${{ env.REGISTRY }}"
+          echo "Registry: ghcr.io"
