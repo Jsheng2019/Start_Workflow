@@ -34,7 +34,7 @@ on:
       # image-name: Custom image name override (defaults to ghcr.io/<repo>)
       # -----------------------------------------------------------------------
       image-name:
-        description: 'Container image name (default: ghcr.io/${{ github.repository }})'
+        description: 'Container image name (default: ghcr.io/owner/repo)'
         required: false
         type: string
       # -----------------------------------------------------------------------
