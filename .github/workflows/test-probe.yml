@@ -1,36 +1,33 @@
-name: Test Probe Final
+name: Test Probe 2
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  first:
+  calc:
     runs-on: ubuntu-latest
     outputs:
-      mykey: ${{ steps.gen.outputs.value }}
+      dep-key: ${{ steps.c.outputs.dkey }}
     steps:
       - uses: actions/checkout@v4
-      - id: gen
-        run: echo "value=hash-${{ hashFiles('package.json') }}" >> "$GITHUB_OUTPUT"
+      - id: c
+        run: |
+          echo "dkey=npm-${{ hashFiles('package-lock.json') }}" >> "$GITHUB_OUTPUT"
+          echo "bkey=build-${{ hashFiles('src/**/*.ts', 'tsconfig.json') }}" >> "$GITHUB_OUTPUT"
 
-  second:
-    needs: first
-    if: github.ref == 'refs/heads/main'
+  consumer:
+    needs: calc
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [18, 20]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-      - run: echo ${{ needs.first.outputs.mykey }}
+      - run: echo ${{ needs.calc.outputs['dep-key'] }}
