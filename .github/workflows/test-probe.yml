@@ -1,33 +1,28 @@
-name: Test Probe 2
+name: Test Probe 3
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [dev]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   calc:
     runs-on: ubuntu-latest
     outputs:
-      dep-key: ${{ steps.c.outputs.dkey }}
+      mykey: ${{ steps.c.outputs.key }}
     steps:
       - uses: actions/checkout@v4
       - id: c
-        run: |
-          echo "dkey=npm-${{ hashFiles('package-lock.json') }}" >> "$GITHUB_OUTPUT"
-          echo "bkey=build-${{ hashFiles('src/**/*.ts', 'tsconfig.json') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=npm-${{ hashFiles('package-lock.json') }}" >> "$GITHUB_OUTPUT"
 
-  consumer:
+  restore-test:
     needs: calc
     runs-on: ubuntu-latest
     steps:
-      - run: echo ${{ needs.calc.outputs['dep-key'] }}
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: node_modules
+          key: ${{ needs.calc.outputs.mykey }}
+          restore-keys: |
+            npm-cache-
+      - run: echo "Restored with key: ${{ needs.calc.outputs.mykey }}"
