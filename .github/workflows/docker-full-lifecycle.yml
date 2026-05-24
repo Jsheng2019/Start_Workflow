@@ -961,11 +961,11 @@ jobs:
       # Docker Scout quickview on verified image
       # -------------------------------------------------------------------------
       # Final health check: run Docker Scout quickview on the verified image.
-      # This is a lightweight check that confirms the image is pullable and
-      # Scout can analyze it. It also provides a final vulnerability summary
-      # before the image proceeds to release.
+      # continue-on-error: Docker Scout requires a paid Docker subscription.
+      # Remove this flag if your org has an active Docker Business/Teams plan.
       # -------------------------------------------------------------------------
       - name: Docker Scout final check
+        continue-on-error: true
         uses: docker/scout-action@v1
         with:
           command: quickview
