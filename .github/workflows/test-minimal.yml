@@ -1,4 +1,4 @@
-name: Test Debug 4
+name: Test Debug 5
 
 on:
   push:
@@ -8,11 +8,9 @@ on:
 jobs:
   first:
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.gen.outputs.value }}
     steps:
-      - run: echo "first"
-
-  second:
-    needs: first
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "second"
+      - id: gen
+        run: echo "value=hello" >> "$GITHUB_OUTPUT"
+      - run: echo "Output set to: ${{ steps.gen.outputs.value }}"
