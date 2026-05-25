@@ -1,121 +1,111 @@
-# Workflow 2: Docker Full Lifecycle — Complete Documentation
+# 工作流 2：Docker 全生命周期 — 完整文档
 
-> **File:** `.github/workflows/docker-full-lifecycle.yml`
+> **文件：** `.github/workflows/docker-full-lifecycle.yml`
 >
-> **Purpose:** A production-grade Docker image lifecycle workflow covering multi-architecture
-> builds, vulnerability scanning, SBOM generation, Cosign keyless signing, SLSA provenance,
-> image verification, GitHub Release creation, and storage cleanup.
+> **目的：** 一个生产级的 Docker 镜像生命周期工作流，涵盖多架构构建、漏洞扫描、SBOM（软件物料清单）生成、Cosign 无密钥签名、SLSA（软件供应链级别）出处证明、镜像验证、GitHub Release 创建和存储清理。
 >
-> **Audience:** Developers and DevOps engineers learning GitHub Actions and Docker security
+> **读者对象：** 学习 GitHub Actions 和 Docker 安全的开发者和 DevOps 工程师
 
-## Table of Contents
+## 目录
 
-1. [Overview](#1-overview)
-2. [Trigger Configuration (`on:`)](#2-trigger-configuration-on)
-3. [Permissions](#3-permissions)
-4. [Environment Variables](#4-environment-variables)
-5. [Job 1: docker-setup](#5-job-1-docker-setup)
-6. [Job 2: docker-lint](#6-job-2-docker-lint)
-7. [Job 3: metadata](#7-job-3-metadata)
-8. [Job 4: build-push](#8-job-4-build-push)
-9. [Job 5: image-scan](#9-job-5-image-scan)
-10. [Job 6: sbom-attest](#10-job-6-sbom-attest)
-11. [Job 7: verify-image](#11-job-7-verify-image)
-12. [Job 8: release](#12-job-8-release)
-13. [Job 9: cleanup](#13-job-9-cleanup)
-14. [Docker Concepts Reference](#14-docker-concepts-reference)
-15. [GitHub Actions Concepts Reference](#15-github-actions-concepts-reference)
+1. [概述](#1-概述)
+2. [触发器配置（`on:`）](#2-触发器配置-on)
+3. [权限](#3-权限)
+4. [环境变量](#4-环境变量)
+5. [作业 1：docker-setup](#5-作业-1-docker-setup)
+6. [作业 2：docker-lint](#6-作业-2-docker-lint)
+7. [作业 3：metadata](#7-作业-3-metadata)
+8. [作业 4：build-push](#8-作业-4-build-push)
+9. [作业 5：image-scan](#9-作业-5-image-scan)
+10. [作业 6：sbom-attest](#10-作业-6-sbom-attest)
+11. [作业 7：verify-image](#11-作业-7-verify-image)
+12. [作业 8：release](#12-作业-8-release)
+13. [作业 9：cleanup](#13-作业-9-cleanup)
+14. [Docker 概念参考](#14-docker-概念参考)
+15. [GitHub Actions 概念参考](#15-github-actions-概念参考)
 
 ---
 
-## 1. Overview
+## 1. 概述
 
-### What This Workflow Does
+### 本工作流的功能
 
-This workflow implements a **Docker container image lifecycle pipeline** — every image goes
-through build, scan, sign, verify, and release before being published. It demonstrates:
+该工作流实现了一个 **Docker 容器镜像生命周期流水线** — 每个镜像在发布前都要经过构建、扫描、签名、验证和发布。它展示了：
 
-1. **Multi-architecture setup** — QEMU emulation + BuildKit for amd64/arm64 builds
-2. **Dockerfile linting** — Hadolint best-practice validation with SARIF upload
-3. **Metadata generation** — OCI-compliant tags and labels from Git context
-4. **Multi-platform build + push** — Parallel amd64/arm64 with layer caching
-5. **Vulnerability scanning** — Trivy deep CVE scan + Docker Scout policy evaluation
-6. **SBOM + signing** — SPDX bill of materials + Cosign keyless signing
-7. **Image verification** — Digest-pinned pull, signature verify, manifest inspection
-8. **Release creation** — GitHub Release with all artifacts attached
-9. **Storage cleanup** — Untagged image version pruning
+1. **多架构设置** — QEMU 仿真 + BuildKit 用于 amd64/arm64 构建
+2. **Dockerfile 静态检查** — Hadolint 最佳实践验证，并上传 SARIF 结果
+3. **元数据生成** — 基于 Git 上下文生成符合 OCI 标准的标签和标记
+4. **多平台构建与推送** — 并行 amd64/arm64 构建，支持层缓存
+5. **漏洞扫描** — Trivy 深度 CVE 扫描 + Docker Scout 策略评估
+6. **SBOM（软件物料清单）与签名** — SPDX 物料清单 + Cosign 无密钥签名
+7. **镜像验证** — 基于摘要的拉取、签名验证、清单检查
+8. **发布创建** — 创建包含所有产物的 GitHub Release
+9. **存储清理** — 清理未标记的镜像版本
 
-### Architecture Diagram
+### 架构图
 
 ```
 on: workflow_dispatch or release:published
          │
          ▼
   ┌──────────────┐
-  │ docker-setup  │  ←── QEMU + Buildx (docker-container driver)
+  │ docker-setup  │  ←── QEMU + Buildx（docker-container 驱动）
   └──────┬───────┘
          │
          ├──────────────────────────┐
          ▼                          ▼
   ┌──────────────┐         ┌────────────────┐
-  │  docker-lint  │         │   metadata     │  ←── parallel
-  │ (Hadolint)    │         │ (tags + labels)│
+  │  docker-lint  │         │   metadata     │  ←── 并行执行
+  │ (Hadolint)    │         │（标签+标记）    │
   └──────┬───────┘         └───────┬────────┘
          │                          │
          └──────────┬───────────────┘
                     ▼
           ┌──────────────────┐
-          │   build-push      │  ←── multi-arch + provenance + SBOM
+          │   build-push      │  ←── 多架构 + 出处证明 + SBOM
           └────────┬─────────┘
                    │
          ┌─────────┴──────────┐
          ▼                    ▼
   ┌──────────────┐   ┌──────────────┐
-  │  image-scan   │   │ sbom-attest  │  ←── parallel
-  │ (Trivy+Scout) │   │ (SBOM+Cosign)│
+  │  image-scan   │   │ sbom-attest  │  ←── 并行执行
+  │(Trivy+Scout)  │   │(SBOM+Cosign) │
   └──────┬───────┘   └──────┬───────┘
          │                    │
          └────────┬──────────┘
                   ▼
          ┌──────────────────┐
-         │  verify-image     │  ←── pull + verify + inspect
+         │  verify-image     │  ←── 拉取 + 验证 + 检查
          └────────┬─────────┘
                   │
                   ▼
          ┌──────────────────┐
-         │     release       │  ←── GitHub Release (optional)
+         │     release       │  ←── GitHub Release（可选）
          └────────┬─────────┘
                   │
                   ▼
          ┌──────────────────┐
-         │     cleanup       │  ←── prune untagged (main only)
+         │     cleanup       │  ←── 清理未标记版本（仅 main 分支）
          └──────────────────┘
 ```
 
-### Key Design Principles
+### 关键设计原则
 
-1. **Digest immutability over tags:** Every job that consumes the image uses the SHA256 digest
-   (`@sha256:...`), not a tag. Tags are mutable and can be overwritten; digests are
-   content-addressable and unique to the image content.
+1. **摘要不可变性优于标签：** 每个使用镜像的作业都使用 SHA256 摘要（`@sha256:...`），而不是标签。标签是可变的，可能被覆盖；摘要是内容寻址的，且对镜像内容唯一。
 
-2. **Defense in depth:** Multiple scanning tools (Trivy + Docker Scout) for broader CVE coverage.
-   Multiple signing mechanisms (Cosign + SLSA attestation + GitHub attestation) for
-   redundant verification.
+2. **纵深防御：** 多种扫描工具（Trivy + Docker Scout）提供更广泛的 CVE 覆盖范围。多种签名机制（Cosign + SLSA 证明 + GitHub 证明）提供冗余验证。
 
-3. **Shift left, verify right:** Dockerfile linting catches issues before the build.
-   Post-build verification catches registry tampering after the push.
+3. **左移验证、右移确认：** Dockerfile 静态检查在构建前发现问题。构建后的验证在推送后检测镜像仓库篡改。
 
-4. **Job DAG for parallel efficiency:** Independent jobs (docker-lint + metadata, image-scan +
-   sbom-attest) run in parallel to minimize total wall-clock time.
+4. **作业 DAG 实现并行效率：** 独立作业（docker-lint + metadata，image-scan + sbom-attest）并行运行，以最小化总耗时。
 
-5. **Emergency bypass:** The `skip-scan` input allows bypassing the security scan for
-   emergency hotfixes, while maintaining all other pipeline steps.
+5. **紧急绕过：** `skip-scan` 输入允许在紧急热修复时绕过安全扫描，同时保持所有其他流水线步骤。
 
 ---
 
-## 2. Trigger Configuration (`on:`)
+## 2. 触发器配置（`on:`）
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 on:
@@ -139,83 +129,60 @@ on:
         type: boolean
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`on:`** — The top-level key that defines which events trigger the workflow. GitHub Actions
-supports many event types including `push`, `pull_request`, `release`, `schedule`, `workflow_dispatch`,
-`workflow_call`, `repository_dispatch`, `issue_comment`, `registry_package`, and more.
+**`on:`** — 定义哪些事件触发工作流的顶级键。GitHub Actions 支持多种事件类型，包括 `push`、`pull_request`、`release`、`schedule`、`workflow_dispatch`、`workflow_call`、`repository_dispatch`、`issue_comment`、`registry_package` 等。
 
-**`release:`** — Trigger when a GitHub Release event occurs. This is useful for publishing
-images that correspond to official releases of the software.
+**`release:`** — 当 GitHub Release 事件发生时触发。这对于发布与软件官方版本对应的镜像非常有用。
 
-**`types: [published]`** — Sub-filter for the release event. Only trigger when the release
-is published (not when it's created as a draft, edited, or deleted). Other release types
-include: `created`, `edited`, `deleted`, `prereleased`, `unpublished`.
+**`types: [published]`** — release 事件的子过滤器。仅在发布被发布时触发（而不是在创建为草稿、编辑或删除时）。其他 release 类型包括：`created`、`edited`、`deleted`、`prereleased`、`unpublished`。
 
-**`workflow_dispatch:`** — Allows manual triggering of the workflow from the GitHub UI,
-REST API, or CLI (`gh workflow run`). This is essential for testing the pipeline without
-creating a release.
+**`workflow_dispatch:`** — 允许从 GitHub UI、REST API 或 CLI（`gh workflow run`）手动触发工作流。这对于在不创建 release 的情况下测试流水线至关重要。
 
-**`inputs:`** — Defines the input parameters for `workflow_dispatch`. These appear as form
-fields in the GitHub UI "Run workflow" dialog.
+**`inputs:`** — 定义 `workflow_dispatch` 的输入参数。这些参数在 GitHub UI 的"运行工作流"对话框中显示为表单字段。
 
-**`image-name:`** — An optional string input for overriding the container image name.
-When not provided, the workflow defaults to `ghcr.io/${{ github.repository }}` which
-expands to `ghcr.io/owner/repo-name`.
+**`image-name:`** — 用于覆盖容器镜像名称的可选字符串输入。当未提供时，工作流默认为 `ghcr.io/${{ github.repository }}`，展开后为 `ghcr.io/owner/repo-name`。
 
-**`description:`** — The human-readable label shown in the GitHub UI form. Always provide
-clear descriptions so team members know what each input does.
+**`description:`** — 在 GitHub UI 表单中显示的人类可读标签。始终提供清晰的描述，以便团队成员了解每个输入的功能。
 
-**`required: false`** — Whether the user must provide a value. When false, the input
-defaults to empty or the specified `default` value.
+**`required: false`** — 用户是否必须提供值。当为 false 时，输入默认为空或指定的 `default` 值。
 
-**`type: string`** — The data type for the input. Supported types: `string`, `number`,
-`boolean`, `choice`, `environment`.
+**`type: string`** — 输入的数据类型。支持的类型：`string`、`number`、`boolean`、`choice`、`environment`。
 
-**`platforms:`** — A string input for specifying target build platforms. The default
-`linux/amd64,linux/arm64` covers the two most common server architectures. AWS Graviton
-and Apple Silicon use arm64; traditional servers use amd64.
+**`platforms:`** — 用于指定目标构建平台的字符串输入。默认值 `linux/amd64,linux/arm64` 涵盖了两种最常见的服务器架构。AWS Graviton 和 Apple Silicon 使用 arm64；传统服务器使用 amd64。
 
-**`default: 'linux/amd64,linux/arm64'`** — The default value used when the user doesn't
-provide one. For multi-arch builds, you'd add platforms like `linux/arm/v7` (Raspberry Pi),
-`linux/s390x` (IBM mainframe), or `linux/ppc64le` (PowerPC).
+**`default: 'linux/amd64,linux/arm64'`** — 用户未提供时使用的默认值。对于多架构构建，可以添加诸如 `linux/arm/v7`（树莓派）、`linux/s390x`（IBM 大型机）或 `linux/ppc64le`（PowerPC）等平台。
 
-**`skip-scan:`** — A boolean input for emergency bypass of vulnerability scanning. Setting
-this to `true` skips the `image-scan` job. This is a deliberate risk-acceptance mechanism
-for security hotfixes where the fix addresses a vulnerability that the scan would detect.
+**`skip-scan:`** — 用于紧急绕过漏洞扫描的布尔输入。将此设置为 `true` 将跳过 `image-scan` 作业。这是一个有意的风险接受机制，适用于安全热修复场景，其中修复本身解决了扫描会检测到的漏洞。
 
-**`type: boolean`** — Renders as a checkbox in the GitHub UI. Valid values: `true` or `false`.
+**`type: boolean`** — 在 GitHub UI 中呈现为复选框。有效值：`true` 或 `false`。
 
-### Key Concepts
+### 关键概念
 
-**Workflow dispatch with typed inputs** is one of the most powerful features of GitHub Actions
-for operations workflows. The input types map to native HTML form elements:
-- `string` → text input field
-- `choice` → dropdown select (requires `options:` array)
-- `boolean` → checkbox
-- `number` → number input with validation
+**带类型输入的工作流调度（workflow_dispatch）** 是 GitHub Actions 在运维工作流中最强大的功能之一。输入类型映射到原生 HTML 表单元素：
+- `string` → 文本输入字段
+- `choice` → 下拉选择（需要 `options:` 数组）
+- `boolean` → 复选框
+- `number` → 带验证的数字输入
 
-Unlike `pull_request` or `push` triggers that run automatically, `workflow_dispatch` requires
-manual initiation. It's ideal for:
-- Deployment workflows
-- Release publishing pipelines
-- Maintenance tasks (cleanup, migration)
-- Testing/debugging workflows
+与自动运行的 `pull_request` 或 `push` 触发器不同，`workflow_dispatch` 需要手动发起。它适用于：
+- 部署工作流
+- 发布流水线
+- 维护任务（清理、迁移）
+- 测试/调试工作流
 
-The `release` event has a special relationship with tags. When a release is published:
-1. GitHub creates a Git tag matching the release tag if one doesn't exist
-2. The `github.ref` variable is set to the tag (e.g., `refs/tags/v1.2.3`)
-3. The `github.event.release` object contains all release metadata
+`release` 事件与标签有特殊关系。当发布被发布时：
+1. 如果不存在匹配的 Git 标签，GitHub 会创建一个与 release 标签匹配的 Git 标签
+2. `github.ref` 变量被设置为该标签（例如 `refs/tags/v1.2.3`）
+3. `github.event.release` 对象包含所有发布元数据
 
-This is why the `release` job in our workflow checks `github.event_name == 'release'` —
-it determines whether to create a new release (workflow_dispatch) or attach to an existing
-one (release event).
+这就是为什么我们工作流中的 `release` 作业会检查 `github.event_name == 'release'` — 它决定是创建一个新的 release（workflow_dispatch）还是附加到一个现有的 release（release 事件）。
 
 ---
 
-## 3. Permissions
+## 3. 权限
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 permissions:
@@ -226,88 +193,76 @@ permissions:
   security-events: write
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`permissions:`** — The top-level key for setting GITHUB_TOKEN permissions. By default,
-GitHub Actions grants a scoped-down token with only `contents: read`. You must explicitly
-request additional permissions.
+**`permissions:`** — 设置 GITHUB_TOKEN 权限的顶级键。默认情况下，GitHub Actions 授予一个仅具有 `contents: read` 范围的缩减令牌。您必须显式请求其他权限。
 
-**`contents: write`** — Required for:
-- Pushing commits/tags (if applicable)
-- Creating releases (`softprops/action-gh-release`)
-- Uploading release assets
-- Reading/writing repository contents
+**`contents: write`** — 需要用于：
+- 推送提交/标签（如果适用）
+- 创建 releases（`softprops/action-gh-release`）
+- 上传 release 资产
+- 读取/写入仓库内容
 
-Without `contents: write`, the `release` job will fail when trying to create a GitHub Release.
+如果没有 `contents: write`，`release` 作业在尝试创建 GitHub Release 时会失败。
 
-**`packages: write`** — Required for:
-- Pushing container images to GHCR (`docker/build-push-action`)
-- Deleting package versions (`actions/delete-package-versions`)
-- Any GitHub Packages API write operations
+**`packages: write`** — 需要用于：
+- 推送容器镜像到 GHCR（`docker/build-push-action`）
+- 删除包版本（`actions/delete-package-versions`）
+- 任何 GitHub Packages API 写入操作
 
-Without `packages: write`, the `build-push` job will get a 403 error when pushing to GHCR.
+如果没有 `packages: write`，`build-push` 作业在推送到 GHCR 时会收到 403 错误。
 
-**`id-token: write`** — Required for:
-- OIDC (OpenID Connect) token generation
-- Cosign keyless signing (exchanges OIDC token with Fulcio)
-- `actions/attest-build-provenance` (SLSA attestation)
+**`id-token: write`** — 需要用于：
+- OIDC（OpenID Connect，开放ID连接）令牌生成
+- Cosign 无密钥签名（与 Fulcio 交换 OIDC 令牌）
+- `actions/attest-build-provenance`（SLSA 证明）
 - `slsa-framework/slsa-github-generator`
 
-The OIDC token is requested from GitHub's OIDC provider at `https://token.actions.githubusercontent.com`.
-Cosign uses this token to prove the workflow's identity to Fulcio (the certificate authority).
+OIDC 令牌从 GitHub 的 OIDC 提供商 `https://token.actions.githubusercontent.com` 请求获取。Cosign 使用此令牌向 Fulcio（证书颁发机构）证明工作流的身份。
 
-Without `id-token: write`, Cosign signing and attestation steps will fail because the
-OIDC token won't be available.
+如果没有 `id-token: write`，Cosign 签名和证明步骤将因 OIDC 令牌不可用而失败。
 
-**`attestations: write`** — Required for:
-- `actions/attest-build-provenance@v2` to store attestations in the registry
-- Creating cryptographically signed attestation objects
+**`attestations: write`** — 需要用于：
+- `actions/attest-build-provenance@v2` 在镜像仓库中存储证明
+- 创建加密签名的证明对象
 
-This is a relatively new permission (added with the attestation actions). It controls
-write access to the attestations API endpoint.
+这是一个相对较新的权限（随证明操作一起添加）。它控制对证明 API 端点的写入访问。
 
-Without `attestations: write`, the build provenance attestation step will fail.
+如果没有 `attestations: write`，构建出处证明步骤将失败。
 
-**`security-events: write`** — Required for:
-- Uploading SARIF files to GitHub Security tab
-- Creating code scanning alerts
+**`security-events: write`** — 需要用于：
+- 上传 SARIF 文件到 GitHub Security 选项卡
+- 创建代码扫描告警
 - `github/codeql-action/upload-sarif`
 
-The SARIF format (Static Analysis Results Interchange Format) is an OASIS standard for
-exchanging static analysis results. GitHub ingests SARIF files and displays them as
-Code Scanning alerts.
+SARIF 格式（静态分析结果交换格式）是用于交换静态分析结果的 OASIS 标准。GitHub 接收 SARIF 文件并将其显示为代码扫描告警。
 
-Without `security-events: write`, SARIF upload steps will fail with a 403 error.
+如果没有 `security-events: write`，SARIF 上传步骤将失败并返回 403 错误。
 
-### Key Concepts
+### 关键概念
 
-**GITHUB_TOKEN** is an automatically generated token scoped to the workflow run. It is:
-- Created fresh for each workflow run
-- Valid only for the duration of the run
-- Automatically expires at the end of the run
-- Exposed as `secrets.GITHUB_TOKEN`
-- Scoped to the repository that contains the workflow
+**GITHUB_TOKEN** 是一个自动生成的、作用域限定在工作流运行范围内的令牌。它：
+- 每次工作流运行都重新创建
+- 仅在运行期间有效
+- 在运行结束时自动过期
+- 作为 `secrets.GITHUB_TOKEN` 暴露
+- 作用域限定在包含工作流的仓库
 
-The principle of least privilege applies to CI/CD tokens too. Never set `permissions: write-all`.
-Instead, explicitly list only the permissions needed.
+最小权限原则也适用于 CI/CD 令牌。切勿设置 `permissions: write-all`。相反，应明确列出仅所需的权限。
 
-**OIDC (OpenID Connect)** is an authentication protocol that allows one system to verify
-the identity of another. In GitHub Actions, OIDC allows the workflow to obtain a token
-that proves:
-- Which repository it's running in
-- Which workflow file initiated it
-- Which branch/tag triggered it
-- Which run ID and run number identify it
+**OIDC（OpenID Connect，开放ID连接）** 是一种允许一个系统验证另一个系统身份的身份验证协议。在 GitHub Actions 中，OIDC 允许工作流获取一个令牌，用于证明：
+- 它在哪个仓库中运行
+- 由哪个工作流文件发起
+- 由哪个分支/标签触发
+- 由哪个运行 ID 和运行编号标识
 
-This OIDC token is the foundation of keyless signing. Instead of storing a private key
-(which could be leaked), the workflow uses its ephemeral identity to prove it's authorized
-to sign the artifact.
+此 OIDC 令牌是无密钥签名的基础。工作流不存储私钥（可能泄露），而是使用其临时身份来证明它有权对产物进行签名。
 
 ---
 
-## 4. Environment Variables
+## 4. 环境变量
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 env:
@@ -316,61 +271,50 @@ env:
   TRIVY_SEVERITY: CRITICAL,HIGH
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`env:`** — Defines environment variables at the workflow level. These are available
-to all jobs and steps in the workflow. Job-level and step-level `env:` blocks can
-override these values for narrower scopes.
+**`env:`** — 在工作流级别定义环境变量。这些变量可用于工作流中的所有作业和步骤。作业级别和步骤级别的 `env:` 块可以在更窄的范围内覆盖这些值。
 
-**`REGISTRY: ghcr.io`** — The container registry hostname. `ghcr.io` is GitHub Container
-Registry. Alternative values:
-- `docker.io` — Docker Hub (requires `DOCKER_USERNAME` and `DOCKER_PASSWORD` secrets)
+**`REGISTRY: ghcr.io`** — 容器镜像仓库主机名。`ghcr.io` 是 GitHub Container Registry（GitHub 容器镜像仓库）。其他可选值：
+- `docker.io` — Docker Hub（需要 `DOCKER_USERNAME` 和 `DOCKER_PASSWORD` 密钥）
 - `quay.io` — Red Hat Quay
 - `<account>.dkr.ecr.<region>.amazonaws.com` — AWS ECR
 - `<name>.azurecr.io` — Azure ACR
 
-Using an `env` variable makes it easy to change registries without editing multiple places
-in the workflow.
+使用 `env` 变量可以轻松更改镜像仓库，而无需编辑工作流中的多个位置。
 
-**`IMAGE_NAME: ${{ github.repository }}`** — The image name, defaulting to the GitHub
-repository name (`owner/repo`). In GHCR, the image path becomes `ghcr.io/owner/repo`.
-The `${{ github.repository }}` variable is a built-in GitHub context variable.
+**`IMAGE_NAME: ${{ github.repository }}`** — 镜像名称，默认为 GitHub 仓库名称（`owner/repo`）。在 GHCR 中，镜像路径变为 `ghcr.io/owner/repo`。`${{ github.repository }}` 变量是一个内置的 GitHub 上下文变量。
 
-**`TRIVY_SEVERITY: CRITICAL,HIGH`** — The severity threshold for Trivy vulnerability
-scanning. Only vulnerabilities at these levels will cause the scan to fail. This is a
-deliberate choice — MEDIUM and LOW findings rarely warrant blocking a build.
+**`TRIVY_SEVERITY: CRITICAL,HIGH`** — Trivy 漏洞扫描的严重级别阈值。只有达到这些级别的漏洞才会导致扫描失败。这是一个有意的选择 — MEDIUM 和 LOW 级别的发现很少需要阻塞构建。
 
-### Key Concepts
+### 关键概念
 
-**GitHub Context (`github.*`):** GitHub Actions provides a rich context object accessible
-via `${{ github.* }}`. Key variables:
-- `github.repository` — Current repository (format: `owner/repo`)
-- `github.ref` — Branch or tag ref (format: `refs/heads/main` or `refs/tags/v1.0.0`)
-- `github.sha` — Commit SHA that triggered the workflow
-- `github.actor` — User who triggered the workflow
-- `github.run_id` — Unique run number
-- `github.run_number` — Run number (increments per workflow)
-- `github.workflow` — Workflow name
-- `github.event_name` — Event that triggered the workflow
-- `github.event` — Full event payload object
-- `github.token` — The GITHUB_TOKEN itself
+**GitHub 上下文（`github.*`）：** GitHub Actions 提供了一个丰富的上下文对象，可通过 `${{ github.* }}` 访问。关键变量：
+- `github.repository` — 当前仓库（格式：`owner/repo`）
+- `github.ref` — 分支或标签引用（格式：`refs/heads/main` 或 `refs/tags/v1.0.0`）
+- `github.sha` — 触发工作流的提交 SHA
+- `github.actor` — 触发工作流的用户
+- `github.run_id` — 唯一的运行编号
+- `github.run_number` — 运行次数（每个工作流递增）
+- `github.workflow` — 工作流名称
+- `github.event_name` — 触发工作流的事件
+- `github.event` — 完整的事件负载对象
+- `github.token` — GITHUB_TOKEN 本身
 
-**Expression syntax (`${{ }}`):** Anything inside `${{ }}` is evaluated as an expression.
-You cannot use arbitrary shell commands — only GitHub expression syntax including:
-- Ternary: `${{ condition && 'value1' || 'value2' }}`
-- Logical operators: `==`, `!=`, `&&`, `||`, `!`
-- String methods: `startsWith`, `endsWith`, `contains`, `format`
-- Object methods: `join`, `fromJSON`, `toJSON`
-- Hash functions: `hashFiles`
+**表达式语法（`${{ }}`）：** `${{ }}` 内的任何内容都会被评估为表达式。不能使用任意的 shell 命令 — 仅限 GitHub 表达式语法，包括：
+- 三元运算符：`${{ condition && 'value1' || 'value2' }}`
+- 逻辑运算符：`==`、`!=`、`&&`、`||`、`!`
+- 字符串方法：`startsWith`、`endsWith`、`contains`、`format`
+- 对象方法：`join`、`fromJSON`、`toJSON`
+- 哈希函数：`hashFiles`
 
-Environment variables set in `env:` blocks are accessible in Shell steps as standard
-environment variables (`$REGISTRY`) and in expressions as `${{ env.REGISTRY }}`.
+在 `env:` 块中设置的环境变量可在 Shell 步骤中作为标准环境变量（`$REGISTRY`）访问，也可在表达式中作为 `${{ env.REGISTRY }}` 访问。
 
 ---
 
-## 5. Job 1: docker-setup
+## 5. 作业 1：docker-setup
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 docker-setup:
@@ -380,12 +324,12 @@ docker-setup:
   steps:
     - uses: actions/checkout@v4
 
-    - name: Set up QEMU for multi-architecture emulation
+    - name: 设置 QEMU 用于多架构仿真
       uses: docker/setup-qemu-action@v3
       with:
         platforms: arm64,arm
 
-    - name: Set up Docker Buildx
+    - name: 设置 Docker Buildx
       id: buildx
       uses: docker/setup-buildx-action@v3
       with:
@@ -394,108 +338,86 @@ docker-setup:
           image=moby/buildkit:latest
         buildkitd-flags: --debug
 
-    - name: Inspect builder
+    - name: 检查构建器
       run: |
-        echo "Builder name: ${{ steps.buildx.outputs.name }}"
-        echo "Driver: docker-container"
-        echo "Supported platforms:"
+        echo "构建器名称: ${{ steps.buildx.outputs.name }}"
+        echo "驱动: docker-container"
+        echo "支持的平台:"
         docker buildx inspect --bootstrap | grep -E "Platforms:|linux/"
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`docker-setup:`** — Job ID. Must be unique within the workflow. Other jobs reference
-this as `needs: docker-setup` or `${{ needs.docker-setup.outputs.* }}`.
+**`docker-setup:`** — 作业 ID。在工作流内必须唯一。其他作业通过 `needs: docker-setup` 或 `${{ needs.docker-setup.outputs.* }}` 引用此作业。
 
-**`runs-on: ubuntu-latest`** — Specifies the runner environment. `ubuntu-latest` is the
-default Linux runner with Docker pre-installed. Other options include `windows-latest`,
-`macos-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `self-hosted`, or custom runner labels.
+**`runs-on: ubuntu-latest`** — 指定运行环境。`ubuntu-latest` 是默认的 Linux 运行器，预装了 Docker。其他选项包括 `windows-latest`、`macos-latest`、`ubuntu-24.04`、`ubuntu-22.04`、`self-hosted` 或自定义运行器标签。
 
-**`outputs:`** — Defines the job's output values that downstream jobs can consume.
-Outputs are key-value pairs set by individual steps writing to `$GITHUB_OUTPUT`.
+**`outputs:`** — 定义作业的输出值，下游作业可以使用这些值。输出是由各个步骤写入 `$GITHUB_OUTPUT` 的键值对。
 
-**`builder-name: ${{ steps.buildx.outputs.name }}`** — An output named `builder-name`
-that captures the Buildx builder instance name. The value comes from the step with
-`id: buildx`, specifically from the step's `outputs.name`.
+**`builder-name: ${{ steps.buildx.outputs.name }}`** — 一个名为 `builder-name` 的输出，捕获 Buildx 构建器实例名称。该值来自 `id: buildx` 步骤，具体来自该步骤的 `outputs.name`。
 
-**`steps:`** — An ordered list of steps within the job. Each step can run a command
-(`run:`) or use a pre-built action (`uses:`).
+**`steps:`** — 作业中的有序步骤列表。每个步骤可以运行命令（`run:`）或使用预构建的操作（`uses:`）。
 
-**`- uses: actions/checkout@v4`** — The standard checkout action. Required because:
-- The runner starts with a clean workspace
-- We need the repository source code for other steps
-- Some steps (like metadata) need Git history for tag/branch detection
-- `hashFiles()` relies on files in the working directory
+**`- uses: actions/checkout@v4`** — 标准检出操作。需要因为：
+- 运行器以干净的工作空间启动
+- 其他步骤需要仓库源代码
+- 某些步骤（如 metadata）需要 Git 历史记录以检测标签/分支
+- `hashFiles()` 依赖于工作目录中的文件
 
-Key inputs for `actions/checkout@v4`:
-- `fetch-depth: 0` — Fetch all history (needed for semver tags)
-- `fetch-tags: true` — Fetch tags with history
-- `persist-credentials: true` — Save token for later Git operations
-- `path: ./some-dir` — Checkout to a subdirectory
-- `ref: ${{ github.ref }}` — Checkout a specific ref
+`actions/checkout@v4` 的关键输入：
+- `fetch-depth: 0` — 获取所有历史记录（semver 标签需要）
+- `fetch-tags: true` — 随历史记录获取标签
+- `persist-credentials: true` — 保存令牌供后续 Git 操作使用
+- `path: ./some-dir` — 检出到子目录
+- `ref: ${{ github.ref }}` — 检出特定引用
 
-**`- name: Set up QEMU...`** — A human-readable step name. Displayed in the GitHub
-UI workflow visualization.
+**`- name: 设置 QEMU...`** — 人类可读的步骤名称。显示在 GitHub UI 工作流可视化中。
 
-**`uses: docker/setup-qemu-action@v3`** — A community action maintained by Docker.
-It installs QEMU (Quick EMUlator) static binaries and registers them with the Linux
-kernel's binfmt_misc subsystem.
+**`uses: docker/setup-qemu-action@v3`** — Docker 维护的社区操作。它安装 QEMU（快速仿真器）静态二进制文件，并将其注册到 Linux 内核的 binfmt_misc 子系统中。
 
-**`with:`** — Passes inputs to the action.
+**`with:`** — 向操作传递输入参数。
 
-**`platforms: arm64,arm`** — Specifies which architecture emulators to install. Each
-platform requires a different QEMU static binary. Common values:
-- `arm64` — 64-bit ARM (AArch64), used by AWS Graviton and Apple Silicon
-- `arm` — 32-bit ARM, used by Raspberry Pi and older mobile devices
-- `s390x` — IBM mainframe
-- `ppc64le` — PowerPC little-endian
-- `riscv64` — RISC-V 64-bit (open standard ISA)
+**`platforms: arm64,arm`** — 指定要安装哪些架构的仿真器。每个平台需要不同的 QEMU 静态二进制文件。常见值：
+- `arm64` — 64 位 ARM（AArch64），AWS Graviton 和 Apple Silicon 使用
+- `arm` — 32 位 ARM，树莓派和较老的移动设备使用
+- `s390x` — IBM 大型机
+- `ppc64le` — PowerPC 小端序
+- `riscv64` — RISC-V 64 位（开放标准 ISA）
 
-Without QEMU, the Docker build on an amd64 runner can only produce amd64 images.
-QEMU translates ARM instructions to x86 at runtime, enabling cross-architecture builds.
+没有 QEMU，在 amd64 运行器上的 Docker 构建只能生成 amd64 镜像。QEMU 在运行时将 ARM 指令转换为 x86 指令，从而实现跨架构构建。
 
-**`- name: Set up Docker Buildx`** — Initializes Docker Buildx which is Docker's
-extended build system built on BuildKit technology.
+**`- name: 设置 Docker Buildx`** — 初始化 Docker Buildx，这是 Docker 基于 BuildKit 技术的扩展构建系统。
 
-**`id: buildx`** — Assigns an identifier to this step. The ID is used by other steps
-to reference this step's outputs via `${{ steps.buildx.outputs.* }}`.
+**`id: buildx`** — 为此步骤分配一个标识符。其他步骤使用此 ID 通过 `${{ steps.buildx.outputs.* }}` 引用此步骤的输出。
 
-**`uses: docker/setup-buildx-action@v3`** — The official Docker action for configuring
-Buildx. It handles:
-- Creating/selecting a builder instance
-- Installing BuildKit if needed
-- Configuring the builder driver
-- Connecting to remote builders
+**`uses: docker/setup-buildx-action@v3`** — 用于配置 Buildx 的官方 Docker 操作。它处理：
+- 创建/选择构建器实例
+- 安装 BuildKit（如果需要）
+- 配置构建器驱动
+- 连接到远程构建器
 
-**`driver: docker-container`** — Specifies the Buildx driver. This is the critical
-choice for multi-arch builds:
+**`driver: docker-container`** — 指定 Buildx 驱动。这是多架构构建的关键选择：
 
-| Driver | Description | Multi-arch | Cache exports | Use case |
+| 驱动 | 描述 | 多架构 | 缓存导出 | 使用场景 |
 |---|---|---|---|---|
-| `docker` | Built-in Docker BuildKit (embedded) | No | Limited | Simple local builds |
-| `docker-container` | External BuildKit container | Yes | Full | CI/CD multi-arch |
-| `kubernetes` | BuildKit pods in K8s cluster | Yes | Full | Enterprise CI |
-| `remote` | Connect to remote BuildKit | Yes | Full | Shared build farm |
+| `docker` | 内置 Docker BuildKit（嵌入式） | 否 | 有限 | 简单的本地构建 |
+| `docker-container` | 外部 BuildKit 容器 | 是 | 完整 | CI/CD 多架构 |
+| `kubernetes` | K8s 集群中的 BuildKit Pod | 是 | 完整 | 企业 CI |
+| `remote` | 连接到远程 BuildKit | 是 | 完整 | 共享构建集群 |
 
-The `docker-container` driver launches a detached BuildKit container (`moby/buildkit`)
-that handles the actual build. This is required because:
-1. The embedded `docker` driver only builds for the host architecture
-2. `docker-container` supports all cache export types
-3. It handles concurrent builds better
-4. It supports build attestations (provenance, SBOM)
+`docker-container` 驱动启动一个独立的 BuildKit 容器（`moby/buildkit`）来处理实际构建。这是必需的，因为：
+1. 嵌入式的 `docker` 驱动只能为主机构建
+2. `docker-container` 支持所有缓存导出类型
+3. 它更好地处理并发构建
+4. 它支持构建证明（出处、SBOM）
 
-**`driver-opts:`** — Additional options passed to the Buildx driver.
+**`driver-opts:`** — 传递给 Buildx 驱动的额外选项。
 
-**`image=moby/buildkit:latest`** — Specifies which BuildKit image to use. The
-`:latest` tag is convenient but not immutable. For production, pin to a specific
-digest: `image=moby/buildkit@sha256:abcdef...`.
+**`image=moby/buildkit:latest`** — 指定要使用的 BuildKit 镜像。`:latest` 标签方便但不可变。对于生产环境，应固定到特定摘要：`image=moby/buildkit@sha256:abcdef...`。
 
-**`buildkitd-flags: --debug`** — Flags passed to the BuildKit daemon. `--debug`
-enables verbose logging useful for troubleshooting build failures. For production,
-consider using `--allow-insecure-entitlement network.host` if needed.
+**`buildkitd-flags: --debug`** — 传递给 BuildKit 守护进程的标志。`--debug` 启用详细日志记录，有助于排查构建故障。对于生产环境，如有需要可考虑使用 `--allow-insecure-entitlement network.host`。
 
-**`- name: Inspect builder`** — A diagnostic step that shows the builder configuration
-in CI logs.
+**`- name: 检查构建器`** — 一个诊断步骤，在 CI 日志中显示构建器配置。
 
 **`docker buildx inspect --bootstrap`** — The `--bootstrap` flag ensures the builder
 is running (pulls the BuildKit image if needed). This command outputs:
@@ -562,9 +484,9 @@ options.
 
 ---
 
-## 6. Job 2: docker-lint
+## 6. 作业 2：docker-lint
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 docker-lint:
@@ -573,7 +495,7 @@ docker-lint:
   steps:
     - uses: actions/checkout@v4
 
-    - name: Lint Dockerfile with Hadolint
+    - name: 使用 Hadolint 对 Dockerfile 进行静态检查
       uses: hadolint/hadolint-action@v3
       with:
         dockerfile: Dockerfile
@@ -581,101 +503,74 @@ docker-lint:
         format: sarif
         output-file: hadolint-results.sarif
 
-    - name: Upload SARIF to GitHub Security
+    - name: 上传 SARIF 到 GitHub Security
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: hadolint-results.sarif
         category: hadolint
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`needs: docker-setup`** — Declares a dependency on the `docker-setup` job. This job
-will not start until `docker-setup` completes successfully. While this job doesn't
-directly use any Buildx/QEMU features, the dependency ensures proper ordering in the
-DAG visualization.
+**`needs: docker-setup`** — 声明对 `docker-setup` 作业的依赖。此作业在 `docker-setup` 成功完成之前不会启动。虽然此作业不直接使用任何 Buildx/QEMU 功能，但该依赖确保了 DAG 可视化中的正确排序。
 
-**`uses: hadolint/hadolint-action@v3`** — A community action wrapping the Hadolint
-Dockerfile linter. Hadolint is a static analysis tool that checks Dockerfiles against
-best practices.
+**`uses: hadolint/hadolint-action@v3`** — 一个封装了 Hadolint Dockerfile 检查器的社区操作。Hadolint 是一个静态分析工具，用于检查 Dockerfile 是否符合最佳实践。
 
-**`dockerfile: Dockerfile`** — Path to the Dockerfile to lint. Relative to the
-repository root. The action reads this file and applies 100+ lint rules.
+**`dockerfile: Dockerfile`** — 要检查的 Dockerfile 路径。相对于仓库根目录。该操作读取此文件并应用 100 多条 lint 规则。
 
-**`failure-threshold: warning`** — Determines which severity level causes the action
-to fail. Options:
-- `error` — Only actual errors fail the build
-- `warning` — Warnings and errors fail the build (stricter)
-- `info` — Info-level findings also fail
-- `style` — Style suggestions also fail
-- `none` — Never fail based on lint results
+**`failure-threshold: warning`** — 确定哪个严重级别会导致操作失败。选项：
+- `error` — 仅实际错误使构建失败
+- `warning` — 警告和错误使构建失败（更严格）
+- `info` — 信息级别的发现也会使构建失败
+- `style` — 样式建议也会使构建失败
+- `none` — 从不基于 lint 结果失败
 
-Using `warning` is a good balance — it catches real issues without being overly pedantic.
+使用 `warning` 是一个很好的平衡 — 它能捕获实际问题而不过于教条。
 
-**`format: sarif`** — Output format for lint results. SARIF (Static Analysis Results
-Interchange Format) is an OASIS standard JSON format. Other formats:
-- `tty` — Terminal-colored output (default)
-- `json` — Machine-readable JSON
-- `checkstyle` — Checkstyle XML format
-- `gitlab_codeclimate` — GitLab format
-- `codeclimate` — Code Climate format
+**`format: sarif`** — lint 结果的输出格式。SARIF（静态分析结果交换格式）是一种 OASIS 标准 JSON 格式。其他格式：
+- `tty` — 终端彩色输出（默认）
+- `json` — 机器可读的 JSON
+- `checkstyle` — Checkstyle XML 格式
+- `gitlab_codeclimate` — GitLab 格式
+- `codeclimate` — Code Climate 格式
 
-**`output-file: hadolint-results.sarif`** — Where to write the output. This file is
-then uploaded to GitHub Security scanning.
+**`output-file: hadolint-results.sarif`** — 输出文件路径。此文件随后上传到 GitHub Security 扫描。
 
-**`uses: github/codeql-action/upload-sarif@v3`** — Uploads the SARIF file to GitHub
-so results appear in the Security tab. Despite being in the CodeQL action package,
-it handles any SARIF file, not just CodeQL results.
+**`uses: github/codeql-action/upload-sarif@v3`** — 将 SARIF 文件上传到 GitHub，使结果显示在 Security 选项卡中。尽管属于 CodeQL 操作包，但它可以处理任何 SARIF 文件，而不仅仅是 CodeQL 结果。
 
-**`sarif_file: hadolint-results.sarif`** — Path to the SARIF file to upload.
+**`sarif_file: hadolint-results.sarif`** — 要上传的 SARIF 文件路径。
 
-**`category: hadolint`** — A categorization tag that distinguishes these results from
-other scanning tools (CodeQL, Trivy, etc.) in the Security tab.
+**`category: hadolint`** — 一个分类标签，用于在 Security 选项卡中将这些结果与其他扫描工具（CodeQL、Trivy 等）区分开来。
 
-### Important Hadolint Rules Explained
+### 重要 Hadolint 规则说明
 
-**DL3006 — Always tag version explicitly:** Never use `FROM ubuntu` (implicit `:latest`).
-Always use `FROM ubuntu:22.04` or `FROM node:20-bookworm-slim`. The `:latest` tag is
-mutable and can change unexpectedly, breaking your build.
+**DL3006 — 始终显式指定版本标签：** 切勿使用 `FROM ubuntu`（隐式 `:latest`）。始终使用 `FROM ubuntu:22.04` 或 `FROM node:20-bookworm-slim`。`:latest` 标签是可变的，可能意外更改，导致构建失败。
 
-**DL3008 — Pin package versions in apt-get install:** Use `apt-get install curl=7.68.0-1`
-instead of `apt-get install curl`. Without version pinning, builds are non-reproducible.
+**DL3008 — 在 apt-get install 中固定软件包版本：** 使用 `apt-get install curl=7.68.0-1` 而不是 `apt-get install curl`。没有版本固定，构建将不可重现。
 
-**DL3009 — Delete apt-get lists:** After `apt-get update`, always run `rm -rf /var/lib/apt/lists/*`
-in the same RUN layer to keep images small.
+**DL3009 — 删除 apt-get 列表：** 在 `apt-get update` 之后，始终在同一 RUN 层中运行 `rm -rf /var/lib/apt/lists/*` 以保持镜像较小。
 
-**DL3018 — Pin package versions in apk add:** Alpine's `apk` should use pinned versions
-like `apk add curl=7.79.1-r0`.
+**DL3018 — 在 apk add 中固定软件包版本：** Alpine 的 `apk` 应使用固定版本，如 `apk add curl=7.79.1-r0`。
 
-**DL3020 — Use COPY instead of ADD:** `ADD` has special behavior (auto-extracts archives,
-fetches URLs) that can cause unexpected results. Use `COPY` for local files unless you
-need ADD's special features.
+**DL3020 — 使用 COPY 而不是 ADD：** `ADD` 具有特殊行为（自动解压归档文件、获取 URL），可能导致意外结果。除非需要 ADD 的特殊功能，否则对本地文件使用 `COPY`。
 
-**DL3025 — Use JSON-array form for ENTRYPOINT/CMD:** Use `CMD ["node", "app.js"]` instead
-of `CMD node app.js`. The shell form wraps the command in `/bin/sh -c`, which doesn't
-handle signals correctly.
+**DL3025 — 对 ENTRYPOINT/CMD 使用 JSON 数组形式：** 使用 `CMD ["node", "app.js"]` 而不是 `CMD node app.js`。Shell 形式将命令包装在 `/bin/sh -c` 中，无法正确处理信号。
 
-**DL3042 — Use --no-install-recommends:** Always add `--no-install-recommends` to
-`apt-get install` to avoid pulling recommended but unnecessary packages.
+**DL3042 — 使用 --no-install-recommends：** 始终在 `apt-get install` 中添加 `--no-install-recommends`，以避免拉取推荐但不必要的软件包。
 
-**DL4006 — Set SHELL for RUN --mount patterns:** When using `RUN --mount=type=cache`,
-set the SHELL to use `-e` flag for proper error handling.
+**DL4006 — 为 RUN --mount 模式设置 SHELL：** 使用 `RUN --mount=type=cache` 时，设置 SHELL 以使用 `-e` 标志进行正确的错误处理。
 
-### Why This Specific Approach
+### 为什么采用这种方法
 
-Hadolint runs BEFORE the build, providing fast feedback without consuming build minutes.
-Catching issues like missing `USER` directive or un-pinned base images early prevents
-security problems from reaching production.
+Hadolint 在构建之前运行，提供快速反馈而不消耗构建时间。尽早捕获诸如缺少 `USER` 指令或未固定基础镜像等问题，可以防止安全问题进入生产环境。
 
-The SARIF upload ensures Dockerfile quality issues appear in GitHub's Security tab
-alongside other vulnerability alerts. This gives a centralized view of all repository
-security concerns.
+SARIF 上传确保 Dockerfile 质量问题与其他漏洞告警一起出现在 GitHub 的 Security 选项卡中。这为所有仓库安全问题提供了集中视图。
 
 ---
 
-## 7. Job 3: metadata
+## 7. 作业 3：metadata
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 metadata:
@@ -690,7 +585,7 @@ metadata:
   steps:
     - uses: actions/checkout@v4
 
-    - name: Generate Docker metadata
+    - name: 生成 Docker 元数据
       id: meta
       uses: docker/metadata-action@v5
       with:
@@ -715,7 +610,7 @@ metadata:
           prefix=
           suffix=
 
-    - name: Extract fallback version
+    - name: 提取备用版本号
       id: meta-latest
       run: |
         if [ -z "${{ steps.meta.outputs.version }}" ]; then
@@ -725,7 +620,7 @@ metadata:
           echo "version=${{ steps.meta.outputs.version }}" >> "$GITHUB_OUTPUT"
         fi
 
-    - name: Print generated metadata
+    - name: 打印生成的元数据
       run: |
         echo "Tags:"
         echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' | sed 's/^/  /'
@@ -734,124 +629,101 @@ metadata:
         echo "Version: ${{ steps.meta-latest.outputs.version || steps.meta.outputs.version }}"
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`outputs:`** — Declares what this job produces for downstream consumption.
+**`outputs:`** — 声明此作业为下游消费生成的内容。
 
-**`tags: ${{ steps.meta.outputs.tags }}`** — The generated Docker tags as a
-comma-separated string (e.g., `ghcr.io/owner/repo:main,ghcr.io/owner/repo:sha-abc123`).
+**`tags: ${{ steps.meta.outputs.tags }}`** — 生成的 Docker 标签，以逗号分隔的字符串形式提供（例如 `ghcr.io/owner/repo:main,ghcr.io/owner/repo:sha-abc123`）。
 
-**`labels: ${{ steps.meta.outputs.labels }}`** — OCI labels as a comma-separated string
-(e.g., `org.opencontainers.image.created=2024-01-01T00:00:00Z,...`).
+**`labels: ${{ steps.meta.outputs.labels }}`** — OCI 标记，以逗号分隔的字符串形式提供（例如 `org.opencontainers.image.created=2024-01-01T00:00:00Z,...`）。
 
-**`json: ${{ steps.meta.outputs.json }}`** — Full JSON output including all metadata.
+**`json: ${{ steps.meta.outputs.json }}`** — 包含所有元数据的完整 JSON 输出。
 
-**`version: ${{ steps.meta-latest.outputs.version || steps.meta.outputs.version }}`** —
-The detected version. Uses short-circuit evaluation: if `meta-latest` produced a version,
-use it; otherwise fall back to `meta` step's version. This handles the case where no
-git tag exists.
+**`version: ${{ steps.meta-latest.outputs.version || steps.meta.outputs.version }}`** — 检测到的版本号。使用短路求值：如果 `meta-latest` 产生了版本号，则使用它；否则回退到 `meta` 步骤的版本号。这处理了没有 Git 标签的情况。
 
-**`uses: docker/metadata-action@v5`** — Docker's official metadata generation action.
-It reads Git context and generates OCI-compliant tags and labels.
+**`uses: docker/metadata-action@v5`** — Docker 官方元数据生成操作。它读取 Git 上下文并生成符合 OCI 标准的标签和标记。
 
-**`images:`** — The base image name. All generated tags are prefixed with this. For
-example, with `images: ghcr.io/owner/repo`, a `type=sha` tag produces
-`ghcr.io/owner/repo:sha-abc123`.
+**`images:`** — 基础镜像名称。所有生成的标签都以此作为前缀。例如，使用 `images: ghcr.io/owner/repo`，`type=sha` 标签会生成 `ghcr.io/owner/repo:sha-abc123`。
 
-**`labels:`** — Custom OCI labels to apply. The action also auto-generates these labels:
-- `org.opencontainers.image.created` — RFC 3339 build timestamp
-- `org.opencontainers.image.source` — Repository URL
-- `org.opencontainers.image.version` — Detected version
-- `org.opencontainers.image.revision` — Git commit SHA
-- `org.opencontainers.image.licenses` — From repository
-- `org.opencontainers.image.title` — Image title
-- `org.opencontainers.image.description` — Repository description
-- `org.opencontainers.image.ref.name` — Git reference name
+**`labels:`** — 要应用的自定义 OCI 标记。该操作还会自动生成以下标记：
+- `org.opencontainers.image.created` — RFC 3339 构建时间戳
+- `org.opencontainers.image.source` — 仓库 URL
+- `org.opencontainers.image.version` — 检测到的版本号
+- `org.opencontainers.image.revision` — Git 提交 SHA
+- `org.opencontainers.image.licenses` — 来自仓库
+- `org.opencontainers.image.title` — 镜像标题
+- `org.opencontainers.image.description` — 仓库描述
+- `org.opencontainers.image.ref.name` — Git 引用名称
 
-**`tags:`** — Tag generation strategy. Each line is a tag rule.
+**`tags:`** — 标签生成策略。每行是一个标签规则。
 
-**`type=ref,event=branch`** — Creates a tag from the branch name. For the `main`
-branch, this produces `ghcr.io/owner/repo:main`.
+**`type=ref,event=branch`** — 从分支名称创建标签。对于 `main` 分支，生成 `ghcr.io/owner/repo:main`。
 
-**`type=ref,event=pr`** — Creates a tag from the PR number. For PR #42, this
-produces `ghcr.io/owner/repo:pr-42`.
+**`type=ref,event=pr`** — 从 PR 编号创建标签。对于 PR #42，生成 `ghcr.io/owner/repo:pr-42`。
 
-**`type=semver,pattern={{version}}`** — From a Git tag like `v1.2.3`, produces
-`ghcr.io/owner/repo:1.2.3`. The `v` prefix is stripped automatically.
+**`type=semver,pattern={{version}}`** — 从类似 `v1.2.3` 的 Git 标签生成 `ghcr.io/owner/repo:1.2.3`。`v` 前缀会自动去除。
 
-**`type=semver,pattern={{major}}.{{minor}}`** — Produces `1.2` from `v1.2.3`.
-Range tags allow users to pull the latest patch of a specific minor version.
+**`type=semver,pattern={{major}}.{{minor}}`** — 从 `v1.2.3` 生成 `1.2`。范围标签允许用户拉取特定次版本的最新补丁。
 
-**`type=semver,pattern={{major}}`** — Produces `1` from `v1.2.3`. Major-only tags
-let users track the latest major release.
+**`type=semver,pattern={{major}}`** — 从 `v1.2.3` 生成 `1`。仅主版本标签让用户可以跟踪最新的主版本发布。
 
-**`type=sha,format=short`** — Produces `sha-abc123` from the commit SHA. Short format
-is 7 characters.
+**`type=sha,format=short`** — 从提交 SHA 生成 `sha-abc123`。短格式为 7 个字符。
 
-**`type=raw,value=latest,enable={{is_default_branch}}`** — The `latest` tag, but only
-on the default branch. The `enable` condition prevents non-main branches from gaining
-the `latest` tag.
+**`type=raw,value=latest,enable={{is_default_branch}}`** — `latest` 标签，但仅在默认分支上。`enable` 条件防止非 main 分支获得 `latest` 标签。
 
-**`type=raw,value=edge,enable=${{ github.ref == 'refs/heads/dev' }}`** — An `edge`
-tag for the dev branch, enabling bleeding-edge image pulls.
+**`type=raw,value=edge,enable=${{ github.ref == 'refs/heads/dev' }}`** — 为 dev 分支提供的 `edge` 标签，允许拉取前沿镜像。
 
-**`flavor:`** — Controls automatic tag behavior.
+**`flavor:`** — 控制自动标签行为。
 
-**`latest=false`** — Prevents the action from auto-adding `latest`. We manage `latest`
-explicitly with the `type=raw` rule above.
+**`latest=false`** — 阻止操作自动添加 `latest`。我们通过上面的 `type=raw` 规则显式管理 `latest`。
 
-**`prefix=`** and **`suffix=`** — No prefix or suffix added to tags.
+**`prefix=`** 和 **`suffix=`** — 不为标签添加前缀或后缀。
 
-**`Extract fallback version:`** — A pure shell step that extracts a version from
-`package.json` when no Git tag exists. This ensures downstream jobs always have a
-`version` output.
+**`提取备用版本号：`** — 一个纯 Shell 步骤，当没有 Git 标签时从 `package.json` 提取版本号。这确保了下游作业始终有 `version` 输出。
 
-**`echo "version=${VERSION}" >> "$GITHUB_OUTPUT"`** — Sets the step output `version`.
-The `$GITHUB_OUTPUT` file is a GitHub Actions convention for setting step outputs.
+**`echo "version=${VERSION}" >> "$GITHUB_OUTPUT"`** — 设置步骤输出 `version`。`$GITHUB_OUTPUT` 文件是 GitHub Actions 设置步骤输出的约定方式。
 
-### docker/metadata-action@v5 — Full Capability Reference
+### docker/metadata-action@v5 — 完整功能参考
 
-Key inputs:
-| Input | Default | Description |
+关键输入：
+| 输入 | 默认值 | 描述 |
 |---|---|---|
-| `images` | (required) | Base image name(s), space-separated |
-| `tags` | — | Tag generation rules |
-| `labels` | — | Custom labels |
-| `flavor` | — | Tag flavor (latest, prefix, suffix) |
-| `sep-tags` | `,` | Separator for multi-tag output |
-| `sep-labels` | `,` | Separator for multi-label output |
-| `bake-target` | `gha-docker` | Bake target file |
-| `github-token` | GITHUB_TOKEN | Token for API access |
+| `images` | （必需） | 基础镜像名称，空格分隔 |
+| `tags` | — | 标签生成规则 |
+| `labels` | — | 自定义标记 |
+| `flavor` | — | 标签风格（latest, prefix, suffix） |
+| `sep-tags` | `,` | 多标签输出的分隔符 |
+| `sep-labels` | `,` | 多标记输出的分隔符 |
+| `bake-target` | `gha-docker` | Bake 目标文件 |
+| `github-token` | GITHUB_TOKEN | 用于 API 访问的令牌 |
 
-Tag types:
-| Type | Example | Description |
+标签类型：
+| 类型 | 示例 | 描述 |
 |---|---|---|
-| `type=ref,event=branch` | `main` | Branch reference |
-| `type=ref,event=pr` | `pr-42` | Pull request number |
-| `type=ref,event=tag` | `v1.2.3` | Git tag (raw) |
-| `type=semver,pattern={{version}}` | `1.2.3` | Semantic version parsing |
-| `type=sha` | `sha-a1b2c3d` | Commit SHA |
-| `type=raw,value=my-tag` | `my-tag` | Custom static tag |
-| `type=schedule` | `nightly` | Scheduled run tag |
-| `type=match,pattern=...` | — | Regex match group |
+| `type=ref,event=branch` | `main` | 分支引用 |
+| `type=ref,event=pr` | `pr-42` | 拉取请求编号 |
+| `type=ref,event=tag` | `v1.2.3` | Git 标签（原始） |
+| `type=semver,pattern={{version}}` | `1.2.3` | 语义版本解析 |
+| `type=sha` | `sha-a1b2c3d` | 提交 SHA |
+| `type=raw,value=my-tag` | `my-tag` | 自定义静态标签 |
+| `type=schedule` | `nightly` | 计划运行标签 |
+| `type=match,pattern=...` | — | 正则匹配组 |
 | `type=pep440,pattern={{version}}` | — | Python PEP 440 |
 
-### Why This Specific Approach
+### 为什么采用这种方法
 
-Centralized metadata generation ensures ALL downstream jobs use consistent tags and labels.
-Without this, the build-push job, release job, and any notification steps would each need
-to implement their own tagging logic, leading to drift and inconsistency.
+集中式元数据生成确保所有下游作业使用一致的标签和标记。没有这个，build-push 作业、release 作业和任何通知步骤都需要各自实现自己的标签逻辑，导致漂移和不一致。
 
-The multi-level semver scheme (version, major.minor, major) gives consumers flexibility:
-- `docker pull myimage:1.2.3` — Pin to exact version
-- `docker pull myimage:1.2` — Get latest patch of 1.2
-- `docker pull myimage:1` — Get latest minor of 1
+多级 semver 方案（版本号、主版本.次版本、主版本）为消费者提供了灵活性：
+- `docker pull myimage:1.2.3` — 固定到精确版本
+- `docker pull myimage:1.2` — 获取 1.2 的最新补丁
+- `docker pull myimage:1` — 获取 1 的最新次版本
 
 ---
 
-## 8. Job 4: build-push
+## 8. 作业 4：build-push
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 build-push:
@@ -907,133 +779,106 @@ build-push:
         echo "  Platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}"
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`needs: [metadata, docker-lint]`** — Depends on both the metadata and docker-lint jobs.
-This ensures linting passes before we invest CI minutes in building.
+**`needs: [metadata, docker-lint]`** — 依赖于 metadata 和 docker-lint 两个作业。这确保了在投入 CI 构建时间之前，lint 检查已通过。
 
-**`image-with-digest: ${{ steps.build.outputs.digest && format(...) || steps.build-full-ref.outputs.ref }}`** —
-A defensive expression that produces the full image reference with digest. Uses short-circuit
-evaluation: if `digest` is set, format the full reference; otherwise, use the fallback output.
+**`image-with-digest: ${{ steps.build.outputs.digest && format(...) || steps.build-full-ref.outputs.ref }}`** — 一个防御性表达式，生成带有摘要的完整镜像引用。使用短路求值：如果 `digest` 已设置，则格式化完整引用；否则使用备用输出。
 
-**`uses: docker/login-action@v3`** — Authenticates with the container registry. For GHCR,
-the credentials are:
-- `username: ${{ github.actor }}` — The GitHub user who triggered the workflow
-- `password: ${{ secrets.GITHUB_TOKEN }}` — The auto-generated token
+**`uses: docker/login-action@v3`** — 向容器镜像仓库进行身份验证。对于 GHCR，凭据为：
+- `username: ${{ github.actor }}` — 触发工作流的 GitHub 用户
+- `password: ${{ secrets.GITHUB_TOKEN }}` — 自动生成的令牌
 
-The GITHUB_TOKEN's scope is determined by the `permissions` block. Since we set
-`packages: write`, this token has push access to GHCR.
+GITHUB_TOKEN 的作用域由 `permissions` 块决定。由于我们设置了 `packages: write`，此令牌拥有对 GHCR 的推送权限。
 
-**`uses: docker/build-push-action@v6`** — The core build action. It orchestrates the
-entire Docker build process using BuildKit.
+**`uses: docker/build-push-action@v6`** — 核心构建操作。它使用 BuildKit 编排整个 Docker 构建过程。
 
-**`context: .`** — The Docker build context directory. This is sent to the BuildKit
-daemon as the build input. Only files within the context are available during the build.
+**`context: .`** — Docker 构建上下文目录。这作为构建输入发送到 BuildKit 守护进程。只有上下文中的文件在构建期间可用。
 
-**`file: ./Dockerfile`** — Path to the Dockerfile, relative to the context directory.
+**`file: ./Dockerfile`** — Dockerfile 的路径，相对于上下文目录。
 
-**`platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}`** —
-Target platforms. When `workflow_dispatch` provides platforms, use them; otherwise
-default to `linux/amd64,linux/arm64`. BuildKit builds each platform in parallel.
+**`platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}`** — 目标平台。当 `workflow_dispatch` 提供了平台时使用它们；否则默认为 `linux/amd64,linux/arm64`。BuildKit 并行构建每个平台。
 
-**`push: true`** — Push the image to the registry after build. The push includes both
-the platform-specific images and the multi-arch manifest list.
+**`push: true`** — 构建后将镜像推送到镜像仓库。推送包括平台特定镜像和多架构清单列表。
 
-**`tags: ${{ needs.metadata.outputs.tags }}`** — The tags from the metadata job.
+**`tags: ${{ needs.metadata.outputs.tags }}`** — 来自 metadata 作业的标签。
 
-**`labels: ${{ needs.metadata.outputs.labels }}`** — OCI labels from the metadata job.
+**`labels: ${{ needs.metadata.outputs.labels }}`** — 来自 metadata 作业的 OCI 标记。
 
-**`provenance: true`** — Generates SLSA Build Level 2 provenance attestation as an
-in-image layer. This creates an attestation manifest that records:
-- Builder ID (GitHub Actions runner)
-- Build configuration (workflow file, inputs)
-- Source repository and commit SHA
-- Image digest
-- Build timestamps
+**`provenance: true`** — 生成 SLSA Build Level 2 出处证明作为镜像内层。这会创建一个证明清单，记录：
+- 构建器 ID（GitHub Actions 运行器）
+- 构建配置（工作流文件、输入）
+- 源代码仓库和提交 SHA
+- 镜像摘要
+- 构建时间戳
 
-The attestation is stored in the registry as a separate manifest linked to the image.
-It can be viewed with `docker buildx imagetools inspect <image>`.
+该证明作为与镜像关联的独立清单存储在镜像仓库中。可以使用 `docker buildx imagetools inspect <image>` 查看。
 
-**`sbom: true`** — Generates a Software Bill of Materials as an in-image layer. This
-records all packages installed in the image, including:
-- OS packages (from apt, apk, yum, etc.)
-- Language-specific packages (npm, pip, gem, etc.)
-- Package versions and licenses
+**`sbom: true`** — 生成软件物料清单（SBOM）作为镜像内层。这记录了镜像中安装的所有软件包，包括：
+- 操作系统软件包（来自 apt、apk、yum 等）
+- 语言特定软件包（npm、pip、gem 等）
+- 软件包版本和许可证
 
-Setting both `provenance` and `sbom` to `true` is equivalent to passing
-`--attest type=provenance` and `--attest type=sbom` to the `docker buildx build` command.
+同时将 `provenance` 和 `sbom` 设置为 `true` 相当于向 `docker buildx build` 命令传递 `--attest type=provenance` 和 `--attest type=sbom`。
 
-**`cache-from: type=gha`** — Restores cached layers from GitHub Actions cache at the
-start of the build. This significantly speeds up subsequent builds when only small
-changes have been made.
+**`cache-from: type=gha`** — 在构建开始时从 GitHub Actions 缓存恢复缓存的层。当只做了微小更改时，这能显著加速后续构建。
 
-**`cache-to: type=gha,mode=max`** — Saves build cache to GitHub Actions cache at the
-end of the build. `mode=max` exports ALL intermediate layers, maximizing cache reuse.
+**`cache-to: type=gha,mode=max`** — 在构建结束时将构建缓存保存到 GitHub Actions 缓存。`mode=max` 导出所有中间层，最大化缓存复用。
 
-Cache types:
-| Type | Backend | Best for |
+缓存类型：
+| 类型 | 后端 | 最适合 |
 |---|---|---|
-| `gha` | GitHub Actions cache | Simple CI, no external infra |
-| `registry` | Container registry | Shared across CI systems |
-| `local` | Local filesystem | Self-hosted runners |
-| `s3` | AWS S3 | Enterprise CI |
-| `azblob` | Azure Blob Storage | Azure-native CI |
+| `gha` | GitHub Actions 缓存 | 简单 CI，无需外部基础设施 |
+| `registry` | 容器镜像仓库 | 跨 CI 系统共享 |
+| `local` | 本地文件系统 | 自托管运行器 |
+| `s3` | AWS S3 | 企业 CI |
+| `azblob` | Azure Blob 存储 | Azure 原生 CI |
 
-**`build-args:`** — Build arguments passed to the Dockerfile via `ARG` instructions.
-`BUILDKIT_CONTEXT_KEEP_GIT_DIR=1` preserves the `.git` directory in the build context,
-which is useful for extracting version information during the build.
+**`build-args:`** — 通过 `ARG` 指令传递给 Dockerfile 的构建参数。`BUILDKIT_CONTEXT_KEEP_GIT_DIR=1` 保留构建上下文中的 `.git` 目录，这对于在构建期间提取版本信息非常有用。
 
-**`annotations: ${{ needs.metadata.outputs.labels }}`** — Additional annotations for
-the image manifest. These are embedded as OCI annotations in the manifest metadata.
+**`annotations: ${{ needs.metadata.outputs.labels }}`** — 镜像清单的额外注解。这些作为 OCI 注解嵌入到清单元数据中。
 
-### Key Outputs
+### 关键输出
 
-**`digest`** — The SHA256 digest of the multi-arch manifest list. This is NOT the
-digest of the platform-specific image — it references the OCI index (manifest list)
-that points to each platform's manifest.
+**`digest`** — 多架构清单列表的 SHA256 摘要。这不是平台特定镜像的摘要 — 它引用指向每个平台清单的 OCI 索引（清单列表）。
 
-Example digest: `sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1`
+摘要示例：`sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1`
 
-### docker/build-push-action@v6 — Full Capability Reference
+### docker/build-push-action@v6 — 完整功能参考
 
-Key inputs (in addition to those used above):
-| Input | Description |
+除上述已使用的输入外，其他关键输入：
+| 输入 | 描述 |
 |---|---|
-| `target` | Multi-stage build target |
-| `no-cache` | Disable layer caching |
-| `pull` | Always pull base images |
-| `network` | Build network mode |
-| `secret-files` | Mount secret files securely |
-| `secrets` | Build secrets (env vars) |
-| `ssh` | SSH agent forwarding |
-| `extra-from` | Source images for COPY --from |
-| `github-token` | GitHub token for authentication |
-| `export-cache` | Export cache to additional backends |
-| `import-cache` | Import cache from additional backends |
-| `outputs` | Build outputs (type=local, type=tar, etc.) |
+| `target` | 多阶段构建目标 |
+| `no-cache` | 禁用层缓存 |
+| `pull` | 始终拉取基础镜像 |
+| `network` | 构建网络模式 |
+| `secret-files` | 安全挂载密钥文件 |
+| `secrets` | 构建密钥（环境变量） |
+| `ssh` | SSH 代理转发 |
+| `extra-from` | COPY --from 的源镜像 |
+| `github-token` | 用于身份验证的 GitHub 令牌 |
+| `export-cache` | 导出缓存到其他后端 |
+| `import-cache` | 从其他后端导入缓存 |
+| `outputs` | 构建输出（type=local, type=tar 等） |
 
-### Why This Specific Approach
+### 为什么采用这种方法
 
-The combination of `provenance: true` and `sbom: true` is significant because these
-attestations are generated DURING the build, not after. BuildKit has access to all
-the information it needs (every `RUN` command, every installed package) at build time.
-Post-build SBOM generation (like we do with anchore/sbom-action) analyzes the final
-image and may miss intermediate build artifacts or multi-stage build details.
+`provenance: true` 和 `sbom: true` 的组合非常重要，因为这些证明是在构建过程中（而非构建后）生成的。BuildKit 在构建时拥有所需的所有信息（每条 `RUN` 命令、每个已安装的软件包）。构建后的 SBOM 生成（如我们使用 anchore/sbom-action 所做的那样）分析最终镜像，可能会遗漏中间构建产物或多阶段构建细节。
 
-The GHA cache backend (`type=gha`) is chosen over `type=registry` because:
-- No additional storage cost (uses existing GHA cache allotment)
-- Automatic cache key management (no manual invalidation)
-- Works without registry authentication
-- Cache is isolated to the repository
+选择 GHA 缓存后端（`type=gha`）而非 `type=registry` 是因为：
+- 无需额外存储成本（使用现有的 GHA 缓存配额）
+- 自动缓存键管理（无需手动失效）
+- 无需镜像仓库身份验证即可工作
+- 缓存隔离到仓库级别
 
-The tradeoff: GHA cache is shared across ALL workflows in the repository, so a
-cache-intensive workflow could evict Docker layer caches.
+其代价：GHA 缓存在仓库中的所有工作流之间共享，因此缓存密集型工作流可能会驱逐 Docker 层缓存。
 
 ---
 
-## 9. Job 5: image-scan
+## 9. 作业 5：image-scan
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 image-scan:
@@ -1089,100 +934,81 @@ image-scan:
         echo "SARIF results uploaded to GitHub Security tab"
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`if: ${{ github.event.inputs.skip-scan != 'true' }}`** — Conditionally skips this
-entire job when the `skip-scan` input is set to `true`. The comparison is a string
-comparison because workflow dispatch inputs are always strings, even for boolean types.
+**`if: ${{ github.event.inputs.skip-scan != 'true' }}`** — 当 `skip-scan` 输入设置为 `true` 时，有条件地跳过整个作业。比较是字符串比较，因为工作流调度输入始终是字符串，即使是布尔类型也是如此。
 
-**`uses: aquasecurity/trivy-action@master`** — The official Trivy action from Aqua Security.
-Trivy (pronounced "trivee") is a comprehensive vulnerability scanner for containers.
+**`uses: aquasecurity/trivy-action@master`** — Aqua Security 的官方 Trivy 操作。Trivy（发音为"trivee"）是一个全面的容器漏洞扫描器。
 
-**`scan-type: image`** — Tells Trivy to scan a container image. Other modes:
-- `fs` — Filesystem scan (IaC misconfigurations, secrets)
-- `repo` — Git repository scan
-- `config` — Kubernetes/YAML/Terraform config scanning
-- `sbom` — SBOM file scanning
+**`scan-type: image`** — 告诉 Trivy 扫描容器镜像。其他模式：
+- `fs` — 文件系统扫描（IaC 配置错误、密钥）
+- `repo` — Git 仓库扫描
+- `config` — Kubernetes/YAML/Terraform 配置扫描
+- `sbom` — SBOM 文件扫描
 
-**`scan-ref:`** — The target to scan. Using `@digest` ensures we scan exactly the image
-that was built, not a different image that might have been pushed to the same tag.
+**`scan-ref:`** — 要扫描的目标。使用 `@digest` 确保我们扫描的是刚刚构建的镜像，而不是可能被推送到同一标签的其他镜像。
 
-**`format: sarif`** — SARIF output for GitHub Security tab integration. Other formats:
-- `table` — Human-readable table (best for local runs)
-- `json` — Machine-readable JSON
-- `template` — Custom Go template
+**`format: sarif`** — SARIF 输出用于 GitHub Security 选项卡集成。其他格式：
+- `table` — 人类可读的表格（最适合本地运行）
+- `json` — 机器可读的 JSON
+- `template` — 自定义 Go 模板
 
-**`exit-code: 1`** — Exit with code 1 when vulnerabilities are found at the specified
-severity level. Setting to `0` would report findings without failing the build.
+**`exit-code: 1`** — 当在指定的严重级别发现漏洞时，以退出码 1 退出。设置为 `0` 将报告发现但不使构建失败。
 
-**`severity: ${{ env.TRIVY_SEVERITY }}`** — Only report vulnerabilities at CRITICAL
-and HIGH severity. This prevents the build from failing on MEDIUM and LOW findings.
+**`severity: ${{ env.TRIVY_SEVERITY }}`** — 仅报告 CRITICAL 和 HIGH 级别的漏洞。这防止了构建因 MEDIUM 和 LOW 级别的发现而失败。
 
-**`vuln-type: os,library`** — Scan both OS-level packages (apt, apk, rpm) and
-application libraries (npm, pip, gem, etc.).
+**`vuln-type: os,library`** — 扫描操作系统级别软件包（apt、apk、rpm）和应用程序库（npm、pip、gem 等）。
 
-**`ignore-unfixed: true`** — Only report vulnerabilities that have a fix available.
-This reduces noise from vulnerabilities where no patch exists yet.
+**`ignore-unfixed: true`** — 仅报告已有修复方案的漏洞。这减少了尚无补丁的漏洞带来的噪音。
 
-**`scanners: vuln,secret`** — Enable vulnerability scanning and secret detection.
-Secret detection looks for hardcoded credentials, API keys, and tokens in the image.
+**`scanners: vuln,secret`** — 启用漏洞扫描和密钥检测。密钥检测会查找镜像中的硬编码凭据、API 密钥和令牌。
 
-**`if: always()`** — Run this step even if previous steps failed. This ensures SARIF
-results are uploaded even when Trivy finds vulnerabilities and exits with code 1.
+**`if: always()`** — 即使前面的步骤失败也运行此步骤。这确保了即使 Trivy 发现漏洞并以退出码 1 退出，SARIF 结果也能被上传。
 
-**`uses: docker/scout-action@v1`** — Docker's own image analysis tool. Docker Scout
-goes beyond CVE scanning to provide contextual recommendations.
+**`uses: docker/scout-action@v1`** — Docker 自己的镜像分析工具。Docker Scout 超越了 CVE 扫描，提供上下文相关的建议。
 
-**`command: quickview,recommendations`** — Run two Scout commands:
-- `quickview` — Summary of vulnerabilities by severity
-- `recommendations` — Suggestions for reducing vulnerabilities (e.g., base image upgrades)
+**`command: quickview,recommendations`** — 运行两个 Scout 命令：
+- `quickview` — 按严重级别汇总漏洞
+- `recommendations` — 减少漏洞的建议（例如，基础镜像升级）
 
-**`exit-code: true`** — Exit with non-zero if findings exceed the severity threshold.
+**`exit-code: true`** — 如果发现超过严重阈值，以非零退出码退出。
 
-### Trivy vs Docker Scout: Complementary Approaches
+### Trivy 与 Docker Scout：互补的方法
 
-| Aspect | Trivy | Docker Scout |
+| 方面 | Trivy | Docker Scout |
 |---|---|---|
-| Database | NVD, GHSA, OSV, RedHat, etc. | Docker's own CVE database |
-| Speed | Fast (compiled Go binary) | Moderate (cloud analysis) |
-| Policy engine | Custom scripts | Built-in policies |
-| Recommendations | No (just reports) | Yes (actionable fixes) |
-| Format | Multiple (SARIF, JSON, table) | Text/report |
-| Licensing | Open source (Apache 2.0) | Free tier with limits |
+| 数据库 | NVD、GHSA、OSV、RedHat 等 | Docker 自己的 CVE 数据库 |
+| 速度 | 快（编译的 Go 二进制文件） | 中等（云端分析） |
+| 策略引擎 | 自定义脚本 | 内置策略 |
+| 建议 | 否（仅报告） | 是（可操作的修复建议） |
+| 格式 | 多种（SARIF、JSON、表格） | 文本/报告 |
+| 许可 | 开源（Apache 2.0） | 有限制的免费层级 |
 
-Running both scanners provides defense in depth. One tool's database may contain CVEs
-the other hasn't indexed yet, and Docker Scout's recommendations provide actionable
-remediation steps that Trivy doesn't.
+同时运行两个扫描器提供纵深防御。一个工具的数据库可能包含另一个尚未索引的 CVE，而 Docker Scout 的建议提供了 Trivy 不具备的可操作修复步骤。
 
-### Trivy Severity Levels
+### Trivy 严重级别
 
-| Level | Meaning | Example |
+| 级别 | 含义 | 示例 |
 |---|---|---|
-| CRITICAL | Exploitation is trivial, widespread damage | RCE in network-facing service |
-| HIGH | Exploitation is possible, significant impact | SQL injection, auth bypass |
-| MEDIUM | Specific conditions required | XSS with CSP, local privilege escalation |
-| LOW | Limited impact, hard to exploit | Information disclosure via error messages |
-| UNKNOWN | Severity not yet rated | New CVE without CVSS score |
+| CRITICAL（严重） | 利用简单，危害范围广 | 面向网络服务中的 RCE（远程代码执行） |
+| HIGH（高危） | 可利用，影响显著 | SQL 注入、身份验证绕过 |
+| MEDIUM（中危） | 需要特定条件 | 带 CSP 的 XSS、本地权限提升 |
+| LOW（低危） | 影响有限，难以利用 | 通过错误消息泄露信息 |
+| UNKNOWN（未知） | 尚未评级 | 没有 CVSS 评分的新 CVE |
 
-### Why This Specific Approach
+### 为什么采用这种方法
 
-The `exit-code: 1` setting turns Trivy findings into a build gate — if CRITICAL or HIGH
-vulnerabilities exist, the workflow fails. This prevents vulnerable images from reaching
-the release stage.
+`exit-code: 1` 设置将 Trivy 发现转化为构建门禁 — 如果存在 CRITICAL 或 HIGH 级别的漏洞，工作流将失败。这防止了存在漏洞的镜像进入发布阶段。
 
-The `if: always()` on SARIF upload is critical: even when Trivy fails the build, we
-want the vulnerability data to appear in GitHub's Security tab for triage and tracking.
+SARIF 上传上的 `if: always()` 是关键：即使 Trivy 使构建失败，我们也希望漏洞数据显示在 GitHub 的 Security 选项卡中，以便分类和跟踪。
 
-The `skip-scan` bypass exists for emergency hotfixes (e.g., patching a critical
-vulnerability in production). In that scenario, the fix itself addresses the CVE, so
-scanning would be redundant. However, this creates a paper trail — every bypass is
-visible in the workflow run history.
+`skip-scan` 绕过机制用于紧急热修复（例如，修补生产环境中的严重漏洞）。在这种情况下，修复本身解决了 CVE，因此扫描将是多余的。然而，这创建了审计线索 — 每次绕过都在工作流运行历史中可见。
 
 ---
 
-## 10. Job 6: sbom-attest
+## 10. 作业 6：sbom-attest
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 sbom-attest:
@@ -1248,116 +1074,91 @@ sbom-attest:
         retention-days: 90
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`uses: anchore/sbom-action@v0`** — Anchore's SBOM generation action. It uses Syft
-(an open-source SBOM tool) to generate a detailed inventory of the container image.
+**`uses: anchore/sbom-action@v0`** — Anchore 的 SBOM 生成操作。它使用 Syft（一个开源 SBOM 工具）生成容器镜像的详细物料清单。
 
-**`format: spdx-json`** — Output format. SPDX (Software Package Data Exchange) is
-an ISO standard (ISO/IEC 5962:2021) for SBOM exchange. The JSON variant is the most
-machine-readable format. Other formats:
-- `cyclonedx-json` — CycloneDX standard (OWASP)
-- `spdx-tag-value` — SPDX tag:value format (more human-readable but harder to parse)
+**`format: spdx-json`** — 输出格式。SPDX（Software Package Data Exchange，软件包数据交换）是用于 SBOM 交换的 ISO 标准（ISO/IEC 5962:2021）。JSON 变体是最机器可读的格式。其他格式：
+- `cyclonedx-json` — CycloneDX 标准（OWASP）
+- `spdx-tag-value` — SPDX 标签:值格式（更易读但更难解析）
 
-**`output-file:`** — Path for the generated SBOM file. Named after the repository
-for clarity: `my-repo-sbom.spdx.json`.
+**`output-file:`** — 生成的 SBOM 文件路径。以仓库名称命名以便清晰识别：`my-repo-sbom.spdx.json`。
 
-**`image:`** — The image to analyze. Using `@digest` for immutable reference.
+**`image:`** — 要分析的镜像。使用 `@digest` 实现不可变引用。
 
-**`uses: sigstore/cosign-installer@v3`** — Installs the Cosign binary. Cosign is part
-of the Sigstore project, which provides a suite of tooling for software supply chain
-security.
+**`uses: sigstore/cosign-installer@v3`** — 安装 Cosign 二进制文件。Cosign 是 Sigstore 项目的一部分，该项目提供了一套用于软件供应链安全性的工具。
 
-**`cosign-release: 'v2.4.1'`** — Pins a specific Cosign version. This ensures
-reproducible behavior across workflow runs. Version 2.4.1 is a stable release with
-keyless signing GA since v2.0.
+**`cosign-release: 'v2.4.1'`** — 固定特定的 Cosign 版本。这确保了跨工作流运行的可重现行为。版本 2.4.1 是一个稳定版本，自 v2.0 起无密钥签名已正式发布（GA）。
 
-### Cosign Keyless Signing — Deep Dive
+### Cosign 无密钥签名 — 深度解析
 
-**What happens during `cosign sign`:**
+**`cosign sign` 期间发生的事情：**
 
-1. **OIDC token request:** Cosign requests an OIDC token from GitHub Actions. The
-   token's identity includes:
-   - Repository: `github.com/owner/repo`
-   - Workflow: `.github/workflows/docker-full-lifecycle.yml`
-   - Ref: `refs/heads/main`
+1. **OIDC 令牌请求：** Cosign 向 GitHub Actions 请求 OIDC 令牌。令牌的身份信息包括：
+   - 仓库：`github.com/owner/repo`
+   - 工作流：`.github/workflows/docker-full-lifecycle.yml`
+   - 引用：`refs/heads/main`
 
-2. **Fulcio certificate exchange:** Cosign sends the OIDC token to Fulcio (Sigstore's
-   certificate authority). Fulcio verifies the token with GitHub's OIDC provider and
-   issues a short-lived X.509 code signing certificate. The certificate includes:
-   - Subject: The OIDC identity (workflow identity)
-   - Issuer: `https://token.actions.githubusercontent.com`
-   - Validity: ~10 minutes
-   - Public key: An ephemeral key pair generated by Cosign
+2. **Fulcio 证书交换：** Cosign 将 OIDC 令牌发送到 Fulcio（Sigstore 的证书颁发机构）。Fulcio 使用 GitHub 的 OIDC 提供商验证令牌，并颁发短期有效的 X.509 代码签名证书。该证书包括：
+   - 主题：OIDC 身份（工作流身份）
+   - 颁发者：`https://token.actions.githubusercontent.com`
+   - 有效期：约 10 分钟
+   - 公钥：Cosign 生成的临时密钥对
 
-3. **Signature generation:** Cosign:
-   - Generates an ephemeral key pair (private + public)
-   - Signs the image digest with the private key
-   - Wraps the signature, public key, and certificate in a standard container
-     signature format
-   - Uploads the signature to the container registry as a separate manifest
+3. **签名生成：** Cosign：
+   - 生成临时密钥对（私钥 + 公钥）
+   - 使用私钥对镜像摘要进行签名
+   - 将签名、公钥和证书包装为标准容器签名格式
+   - 将签名作为单独的清单上传到容器镜像仓库
 
-4. **Rekor transparency log:** Cosign creates an entry in Rekor (Sigstore's
-   transparency log). This provides:
-   - Public auditability (anyone can search Rekor for signatures)
-   - Timestamp proof (the signature existed at a specific time)
-   - Resilience against key compromise (old signatures remain valid)
+4. **Rekor 透明度日志：** Cosign 在 Rekor（Sigstore 的透明度日志）中创建一个条目。这提供了：
+   - 公开可审计性（任何人都可以搜索 Rekor 查找签名）
+   - 时间戳证明（签名在特定时间存在）
+   - 抗密钥泄露能力（旧签名仍然有效）
 
-**Why this is called "keyless":** The private key is ephemeral — it exists only in
-memory during the signing operation and is never stored. The public key is embedded
-in the signing certificate, which is signed by Fulcio's root CA. No one needs to
-manage, rotate, or distribute long-lived signing keys.
+**为什么称为"无密钥"：** 私钥是临时的 — 它仅在签名操作期间存在于内存中，从未被存储。公钥嵌入在签名证书中，该证书由 Fulcio 的根 CA 签名。没有人需要管理、轮换或分发长期有效的签名密钥。
 
-**`cosign attest-blob`** — Signs an arbitrary file (blob) and produces an attestation
-bundle. Unlike `cosign sign` which attaches a signature to a container, this produces
-a standalone `.bundle` file.
+**`cosign attest-blob`** — 对任意文件（blob）进行签名并生成证明包。与将签名附加到容器的 `cosign sign` 不同，此命令生成独立的 `.bundle` 文件。
 
-**`--sign ${{ env.REGISTRY }}/...@digest`** — Links the blob attestation to the
-specific container image. This proves the SBOM belongs to this exact image.
+**`--sign ${{ env.REGISTRY }}/...@digest`** — 将 blob 证明链接到特定的容器镜像。这证明了 SBOM 属于这个确切的镜像。
 
-**`uses: actions/attest-build-provenance@v2`** — GitHub's own attestation mechanism.
-This is separate from Cosign and provides:
-- SLSA Build Level 2 provenance
-- Integration with GitHub's attestation API
-- Verifiable through GitHub's trusted services
+**`uses: actions/attest-build-provenance@v2`** — GitHub 自己的证明机制。这与 Cosign 分开，提供：
+- SLSA Build Level 2 出处证明
+- 与 GitHub 证明 API 的集成
+- 可通过 GitHub 的信任服务验证
 
-**`subject-name:`** and **`subject-digest:`** — Identify the artifact being attested.
-These must match exactly for verification to succeed.
+**`subject-name:`** 和 **`subject-digest:`** — 标识正在被证明的产物。这些必须完全匹配，验证才能成功。
 
-**`push-to-registry: true`** — Pushes the attestation alongside the image in GHCR.
-This stores the attestation as an OCI artifact in the same repository as the image.
+**`push-to-registry: true`** — 将证明与 GHCR 中的镜像一起推送。这以 OCI 制品的形式将证明存储在与镜像相同的仓库中。
 
-### SBOM Format Comparison
+### SBOM 格式对比
 
-| Aspect | SPDX | CycloneDX |
+| 方面 | SPDX | CycloneDX |
 |---|---|---|
-| Standard body | Linux Foundation (ISO/IEC 5962) | OWASP |
-| Latest version | 2.3 | 1.6 |
-| Focus | Legal/license compliance | Security vulnerability correlation |
-| Fields | Package names, versions, licenses, relationships | Everything in SPDX plus: vulnerabilities, exploits, risk scores |
-| Vulnerability mapping | External references | Built-in vulnerability section |
-| Tool support | Broad (Syft, Trivy, Fossa) | Broad (Syft, OWASP tools) |
-| GitHub integration | Supported | Supported |
+| 标准机构 | Linux Foundation（ISO/IEC 5962） | OWASP |
+| 最新版本 | 2.3 | 1.6 |
+| 重点 | 法律/许可证合规 | 安全漏洞关联 |
+| 字段 | 包名称、版本、许可证、关系 | SPDX 全部内容外加：漏洞、利用、风险评分 |
+| 漏洞映射 | 外部引用 | 内置漏洞章节 |
+| 工具支持 | 广泛（Syft、Trivy、Fossa） | 广泛（Syft、OWASP 工具） |
+| GitHub 集成 | 支持 | 支持 |
 
-SPDX is chosen here because it's the more established standard with broader GitHub
-integration, but both formats serve the same fundamental purpose.
+这里选择 SPDX 是因为它是更成熟的标准，具有更广泛的 GitHub 集成，但两种格式都服务于相同的基本目的。
 
-### Why This Specific Approach
+### 为什么采用这种方法
 
-Three separate signing/attestation mechanisms provide defense in depth:
-1. **Cosign sign:** Standard Sigstore signature for the container image
-2. **Cosign attest-blob:** Signed attestation linking the SBOM to the image
-3. **GitHub attestation:** SLSA provenance through GitHub's infrastructure
+三种独立的签名/证明机制提供了纵深防御：
+1. **Cosign sign：** 容器镜像的标准 Sigstore 签名
+2. **Cosign attest-blob：** 将 SBOM 链接到镜像的签名证明
+3. **GitHub 证明：** 通过 GitHub 基础设施提供的 SLSA 出处证明
 
-Each mechanism uses a different trust root, so compromise of any one doesn't affect
-the others. This is particularly important for regulated environments where you need
-to prove an artifact's provenance through multiple independent channels.
+每种机制使用不同的信任根，因此任何一个被攻破都不会影响其他机制。这对于受监管环境尤其重要，在这些环境中需要通过多个独立渠道证明产物的出处。
 
 ---
 
-## 11. Job 7: verify-image
+## 11. 作业 7：verify-image
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 verify-image:
@@ -1414,14 +1215,11 @@ verify-image:
         echo "Pull command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}"
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`docker pull ...@digest`** — Pulls the image using its content-addressable digest
-rather than a mutable tag. This guarantees we get exactly the bytes that were built
-and pushed.
+**`docker pull ...@digest`** — 使用内容可寻址的摘要（而非可变的标签）拉取镜像。这保证我们获取到的是刚刚构建和推送的确切字节。
 
-**`docker buildx imagetools inspect`** — Shows the OCI index (manifest list) for a
-multi-arch image. Output example:
+**`docker buildx imagetools inspect`** — 显示多架构镜像的 OCI 索引（清单列表）。输出示例：
 ```
 Name:      ghcr.io/owner/repo@sha256:abc...
 MediaType: application/vnd.oci.image.index.v1+json
@@ -1430,42 +1228,34 @@ Manifests:
   [1] linux/arm64  digest: sha256:ghi...
 ```
 
-**`docker buildx imagetools inspect --raw`** — Shows the raw JSON of the manifest list.
-Piped through `jq` to extract just the platform information in a readable format.
+**`docker buildx imagetools inspect --raw`** — 显示清单列表的原始 JSON。通过 `jq` 管道提取仅平台信息，以可读格式呈现。
 
-**`cosign verify`** — Verifies the Cosign signature on the image. In keyless mode, this:
-1. Fetches the signature from the registry
-2. Validates the certificate chain (ephemeral cert → Fulcio intermediate → Fulcio root)
-3. Checks that the certificate's OIDC identity matches the expected workflow identity
-4. Verifies the Rekor transparency log entry
-5. Confirms the signature covers the image digest
+**`cosign verify`** — 验证镜像上的 Cosign 签名。在无密钥模式下，此过程：
+1. 从镜像仓库获取签名
+2. 验证证书链（临时证书 -> Fulcio 中间证书 -> Fulcio 根证书）
+3. 检查证书的 OIDC 身份是否与预期的工作流身份匹配
+4. 验证 Rekor 透明度日志条目
+5. 确认签名覆盖镜像摘要
 
-**`--certificate-identity-regexp`** — A regex pattern for the expected identity.
-Instead of matching an exact identity (which would include the specific workflow run),
-we use regex to match any workflow in this repository on this branch.
+**`--certificate-identity-regexp`** — 预期身份的正则表达式模式。我们不匹配精确身份（这将包括特定的工作流运行），而是使用正则表达式匹配此仓库此分支上的任何工作流。
 
-**`--certificate-oidc-issuer "https://token.actions.githubusercontent.com"`** —
-Verifies that the OIDC token was issued by GitHub Actions, not by a different
-OIDC provider. This prevents identity spoofing.
+**`--certificate-oidc-issuer "https://token.actions.githubusercontent.com"`** — 验证 OIDC 令牌是由 GitHub Actions 颁发的，而不是由不同的 OIDC 提供商颁发的。这防止了身份欺骗。
 
-### Why Verify After Push?
+### 为什么在推送后验证？
 
-Between the push and the verification, a sophisticated attacker could:
-1. Overwrite the image tag with a compromised image
-2. Tamper with the registry storage backend
-3. Exploit a registry vulnerability to swap manifests
+在推送和验证之间，老练的攻击者可能：
+1. 用被篡改的镜像覆盖镜像标签
+2. 篡改镜像仓库存储后端
+3. 利用镜像仓库漏洞交换清单
 
-By pulling BY DIGEST (not tag) and verifying the signature against the identity,
-we detect all of these scenarios:
-- Digest mismatch → pull fails or signature verification fails
-- Tag overwrite → irrelevant, we use the digest
-- Registry tampering → signature validation catches it
+通过按摘要（而非标签）拉取并根据身份验证签名，我们能够检测所有这些场景：
+- 摘要不匹配 -> 拉取失败或签名验证失败
+- 标签覆盖 -> 无关紧要，我们使用摘要
+- 镜像仓库篡改 -> 签名验证会捕获
 
----
+## 12. 作业 8：release
 
-## 12. Job 8: release
-
-### YAML Block
+### YAML 代码块
 
 ```yaml
 release:
@@ -1514,51 +1304,41 @@ release:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}`** —
-Only create a release on main branch pushes or when triggered by a GitHub Release
-event. This prevents every dev/feature branch push from creating a release.
+**`if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}`** — 仅在 main 分支推送或由 GitHub Release 事件触发时创建 release。这防止了每个开发/功能分支推送都创建 release。
 
-**`uses: actions/download-artifact@v4`** — Downloads previously uploaded artifacts
-from the sbom-attest job (and any other artifacts).
+**`uses: actions/download-artifact@v4`** — 下载先前从 sbom-attest 作业（以及任何其他产物）上传的产物。
 
-**`path: release-artifacts/`** — Directory to store downloaded artifacts.
+**`path: release-artifacts/`** — 存储下载产物的目录。
 
-**`merge-multiple: true`** — When downloading multiple artifacts, merge them into a
-single directory instead of creating separate subdirectories per artifact.
+**`merge-multiple: true`** — 下载多个产物时，将其合并到单个目录中，而不是为每个产物创建单独的子目录。
 
-**`uses: softprops/action-gh-release@v2`** — A popular community action for creating
-and managing GitHub Releases.
+**`uses: softprops/action-gh-release@v2`** — 一个流行的社区操作，用于创建和管理 GitHub Releases。
 
-**`tag_name:`** — The Git tag for the release. When triggered by a `release` event, use
-the existing release's tag. For `workflow_dispatch`, create a new tag from the version.
+**`tag_name:`** — release 的 Git 标签。当由 `release` 事件触发时，使用现有 release 的标签。对于 `workflow_dispatch`，从版本号创建新标签。
 
-**`draft: ${{ github.event_name != 'release' }}`** — Create as a draft when manually
-triggered, allowing review before publication.
+**`draft: ${{ github.event_name != 'release' }}`** — 当手动触发时创建为草稿，允许在发布前进行审查。
 
-**`generate_release_notes: true`** — Automatically generate release notes from commit
-history since the last release.
+**`generate_release_notes: true`** — 根据自上次 release 以来的提交历史自动生成发布说明。
 
-**`make_latest: true`** — Mark this release as the "latest" release.
+**`make_latest: true`** — 将此 release 标记为"最新"release。
 
-**`files:`** — Glob pattern for files to attach to the release. All downloaded
-artifacts are included.
+**`files:`** — 要附加到 release 的文件 glob 模式。所有下载的产物都被包含。
 
-### Why This Specific Approach
+### 为什么采用这种方法
 
-The conditional behavior (draft vs. published) handles two distinct use cases:
-1. Triggered by a `release` event — artifacts are attached to the existing published release
-2. Triggered by `workflow_dispatch` — creates a draft release for review
+条件行为（草稿 vs. 已发布）处理两种不同的使用场景：
+1. 由 `release` 事件触发 — 产物附加到现有的已发布 release
+2. 由 `workflow_dispatch` 触发 — 创建用于审查的草稿 release
 
-The release body includes Docker pull commands with both digest and tag variants,
-making it easy for consumers to pull the correct image.
+发布正文中包含带有摘要和标签两种变体的 Docker 拉取命令，使消费者能够轻松拉取正确的镜像。
 
 ---
 
-## 13. Job 9: cleanup
+## 13. 作业 9：cleanup
 
-### YAML Block
+### YAML 代码块
 
 ```yaml
 cleanup:
@@ -1584,68 +1364,59 @@ cleanup:
         echo "Registry: ${{ env.REGISTRY }}"
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-**`uses: actions/delete-package-versions@v5`** — GitHub's official action for deleting
-old package versions from GitHub Packages.
+**`uses: actions/delete-package-versions@v5`** — GitHub 的官方操作，用于从 GitHub Packages 中删除旧的包版本。
 
-**`package-name: ${{ env.IMAGE_NAME }}`** — The package to clean up. For GHCR, this is
-the same as the image name.
+**`package-name: ${{ env.IMAGE_NAME }}`** — 要清理的包。对于 GHCR，这与镜像名称相同。
 
-**`package-type: container`** — Specifies the package type. Options include `container`,
-`npm`, `maven`, `rubygems`, `nuget`, `docker`.
+**`package-type: container`** — 指定包类型。选项包括 `container`、`npm`、`maven`、`rubygems`、`nuget`、`docker`。
 
-**`min-versions-to-keep: 5`** — Safety net: never delete below 5 versions. This ensures
-you always have a few recent versions available for rollback.
+**`min-versions-to-keep: 5`** — 安全网：永远不会删除到低于 5 个版本。这确保你始终有几个最近的版本可用于回滚。
 
-**`delete-only-untagged-versions: true`** — Critical safety flag: only delete "orphaned"
-versions that have no tags pointing to them. Tagged versions are preserved.
+**`delete-only-untagged-versions: true`** — 关键安全标志：仅删除没有标签指向的"孤立"版本。有标签的版本被保留。
 
-### When Untagged Versions Are Created
+### 何时创建未标记版本
 
-Untagged versions accumulate in GHCR when:
-1. A new build pushes with the same tag as a previous build — the old version loses its tag
-2. A tag is deleted from the repository — all versions with that tag become untagged
-3. A package is migrated between repositories — tags may be lost during migration
+未标记版本在 GHCR 中积累的情况：
+1. 新构建使用与先前构建相同的标签推送 — 旧版本失去其标签
+2. 标签从仓库中删除 — 所有具有该标签的版本变为未标记
+3. 包在仓库之间迁移 — 迁移过程中可能丢失标签
 
-Without cleanup, these orphaned versions consume storage quota indefinitely.
+如果不进行清理，这些孤立版本将无限期地消耗存储配额。
 
-### Why This Specific Approach
+### 为什么采用这种方法
 
-The `delete-only-untagged-versions: true` flag is the most important safety mechanism.
-It prevents accidental deletion of tagged versions that might be referenced in:
-- Production deployment manifests
-- CI/CD pipelines pulling by tag
-- Developer's local Docker caches
+`delete-only-untagged-versions: true` 标志是最重要的安全机制。它防止意外删除可能在以下环境中被引用的有标签版本：
+- 生产部署清单
+- 按标签拉取的 CI/CD 流水线
+- 开发者的本地 Docker 缓存
 
-The condition `github.ref == 'refs/heads/main'` restricts cleanup to main branch runs,
-preventing cleanup jobs on PR or dev branches from interfering with active development.
+条件 `github.ref == 'refs/heads/main'` 将清理限制在 main 分支运行，防止 PR 或 dev 分支上的清理作业干扰活跃开发。
 
 ---
 
-## 14. Docker Concepts Reference
+## 14. Docker 概念参考
 
-### 14.1 Multi-Architecture Builds (amd64 vs arm64)
+### 14.1 多架构构建（amd64 vs arm64）
 
-**Why two architectures matter:**
+**为什么两种架构很重要：**
 
-| Architecture | Common Name | Typical Hardware |
+| 架构 | 通用名称 | 典型硬件 |
 |---|---|---|
-| `linux/amd64` | x86_64 | Intel Xeon, AMD EPYC, Intel Core |
-| `linux/arm64` | AArch64 | AWS Graviton, Apple M-series, Ampere Altra |
+| `linux/amd64` | x86_64 | Intel Xeon、AMD EPYC、Intel Core |
+| `linux/arm64` | AArch64 | AWS Graviton、Apple M 系列、Ampere Altra |
 
-The industry is shifting toward arm64 for its better performance-per-watt:
-- AWS Graviton instances are 20-40% cheaper than equivalent x86 instances
-- Apple Silicon (M1/M2/M3/M4) is arm64-based
-- Major cloud providers offer arm64 options for all service categories
+行业正在向 arm64 迁移，因为其更高的每瓦性能：
+- AWS Graviton 实例比同等 x86 实例便宜 20-40%
+- Apple Silicon（M1/M2/M3/M4）基于 arm64
+- 主流云提供商为所有服务类别提供 arm64 选项
 
-A Docker image built for amd64 WILL NOT RUN on arm64 without emulation.
-Docker images are architecture-specific because they contain compiled binaries.
+为 amd64 构建的 Docker 镜像在没有仿真的情况下无法在 arm64 上运行。Docker 镜像是架构特定的，因为它们包含编译后的二进制文件。
 
-**How multi-arch images work:**
+**多架构镜像的工作原理：**
 
-An OCI image manifest list (also called "fat manifest") is a JSON document that
-references multiple platform-specific manifests:
+OCI 镜像清单列表（也称为"胖清单"）是一个 JSON 文档，引用多个平台特定的清单：
 
 ```json
 {
@@ -1666,84 +1437,75 @@ references multiple platform-specific manifests:
 }
 ```
 
-When a user runs `docker pull ghcr.io/owner/repo:latest`, Docker:
-1. Fetches the manifest list
-2. Reads the user's CPU architecture (`uname -m`)
-3. Selects the matching platform-specific manifest
-4. Pulls only that platform's layers
+当用户运行 `docker pull ghcr.io/owner/repo:latest` 时，Docker：
+1. 获取清单列表
+2. 读取用户的 CPU 架构（`uname -m`）
+3. 选择匹配的平台特定清单
+4. 仅拉取该平台的层
 
-This is transparent to the end user — they always use the same image name, and Docker
-handles architecture selection automatically.
+这对最终用户是透明的 — 他们始终使用相同的镜像名称，Docker 自动处理架构选择。
 
-**Why QEMU emulation is needed:**
+**为什么需要 QEMU 仿真：**
 
-GitHub Actions runners are exclusively amd64 (x86_64). To build arm64 images, we need
-either:
-1. **Cross-compilation:** Set up cross-compilers for every language in the Dockerfile
-2. **QEMU emulation:** Run arm64 binaries transparently through an instruction translator
+GitHub Actions 运行器仅为 amd64（x86_64）。要构建 arm64 镜像，我们需要：
+1. **交叉编译：** 为 Dockerfile 中的每种语言设置交叉编译器
+2. **QEMU 仿真：** 通过指令转换器透明地运行 arm64 二进制文件
 
-QEMU emulation is simpler but slower. QEMU translates every arm64 instruction to an
-equivalent sequence of x86 instructions at runtime. For CPU-intensive builds (compilation,
-package installation), the slowdown is 2-5x.
+QEMU 仿真更简单但更慢。QEMU 在运行时将每条 arm64 指令转换为等效的 x86 指令序列。对于 CPU 密集型构建（编译、软件包安装），速度会慢 2-5 倍。
 
-For frequently built projects, consider:
-- GitHub's larger [arm64 hosted runners](https://github.com/features/github-actions)
-- Self-hosted arm64 runners (e.g., on AWS Graviton instances)
+对于频繁构建的项目，考虑：
+- GitHub 更大的 [arm64 托管运行器](https://github.com/features/github-actions)
+- 自托管 arm64 运行器（例如，在 AWS Graviton 实例上）
 
-### 14.2 BuildKit and the docker-container Driver
+### 14.2 BuildKit 与 docker-container 驱动
 
-**What is BuildKit?**
+**什么是 BuildKit？**
 
-BuildKit is Docker's next-generation build subsystem. It was introduced in Docker 18.09
-and became the default in Docker 23.0. Key improvements over the legacy builder:
+BuildKit 是 Docker 的下一代构建子系统。它在 Docker 18.09 中引入，并在 Docker 23.0 中成为默认构建器。与旧版构建器相比的关键改进：
 
-| Capability | Legacy Builder | BuildKit |
+| 能力 | 旧版构建器 | BuildKit |
 |---|---|---|
-| Concurrent builds | Single queue | Parallel |
-| Layer caching | Basic | Advanced (multi-backend) |
-| Multi-stage builds | Works | Optimized (skips unused stages) |
-| SSH mounts | No | Yes |
-| Secret mounts | No | Yes (never in image history) |
-| Cache mounts | No | Yes (apt, npm, etc.) |
-| SBOM/provenance | No | Yes (via attestations) |
-| Multi-architecture | Limited | Full |
+| 并发构建 | 单队列 | 并行 |
+| 层缓存 | 基础 | 高级（多后端） |
+| 多阶段构建 | 可用 | 优化（跳过未使用的阶段） |
+| SSH 挂载 | 否 | 是 |
+| 密钥挂载 | 否 | 是（不会出现在镜像历史中） |
+| 缓存挂载 | 否 | 是（apt、npm 等） |
+| SBOM/出处证明 | 否 | 是（通过证明） |
+| 多架构 | 有限 | 完整 |
 
-**How BuildKit works:**
+**BuildKit 的工作原理：**
 
-BuildKit uses a client-server architecture:
-1. The `buildctl` client (or Docker CLI) sends a build definition to a BuildKit daemon
-2. The daemon processes the build as a DAG of operations (not a linear script)
-3. Each operation is cached and can be shared across builds
-4. Operations run in parallel where dependencies allow
+BuildKit 使用客户端-服务器架构：
+1. `buildctl` 客户端（或 Docker CLI）向 BuildKit 守护进程发送构建定义
+2. 守护进程将构建作为操作 DAG（有向无环图）处理（而非线性脚本）
+3. 每个操作都被缓存，可以在构建之间共享
+4. 在依赖允许的情况下，操作并行运行
 
-**docker vs docker-container driver:**
+**docker 与 docker-container 驱动：**
 
-The `docker` driver uses BuildKit embedded in the Docker daemon. It's convenient but
-limited: the embedded BuildKit shares resources with Docker's runtime operations and
-doesn't support advanced features.
+`docker` 驱动使用嵌入在 Docker 守护进程中的 BuildKit。它方便但有限：嵌入式 BuildKit 与 Docker 的运行时操作共享资源，不支持高级功能。
 
-The `docker-container` driver launches a dedicated BuildKit container. This container:
-- Runs as a separate process with its own resource limits
-- Supports all cache export types (gha, registry, local, s3, azblob)
-- Can be configured with custom buildkitd.toml
-- Supports SBOM and provenance attestations
-- Enables multi-architecture builds via QEMU registration
+`docker-container` 驱动启动一个专用的 BuildKit 容器。该容器：
+- 作为独立进程运行，拥有自己的资源限制
+- 支持所有缓存导出类型（gha、registry、local、s3、azblob）
+- 可以使用自定义 buildkitd.toml 进行配置
+- 支持 SBOM 和出处证明
+- 通过 QEMU 注册实现多架构构建
 
-### 14.3 Docker Layer Caching
+### 14.3 Docker 层缓存
 
-**How Docker layer caching works:**
+**Docker 层缓存的工作原理：**
 
-Every Dockerfile instruction creates a layer. Docker caches each layer by its content
-hash. When building, Docker checks if a layer with the same hash already exists in the
-cache. If so, it reuses the cached layer instead of re-executing the instruction.
+每条 Dockerfile 指令都会创建一个层。Docker 根据内容哈希缓存每一层。构建时，Docker 检查具有相同哈希的层是否已存在于缓存中。如果是，则重用缓存的层，而不是重新执行指令。
 
-**Cache invalidation rules:**
-1. If a layer's cache misses, all SUBSEQUENT layers also miss (cache chain break)
-2. `COPY`/`ADD` layers are invalidated when file contents change
-3. `RUN` layers are invalidated when the command or preceding layer changes
-4. `ARG`/`ENV` changes invalidate depending on position in Dockerfile
+**缓存失效规则：**
+1. 如果某一层的缓存未命中，所有后续层也会未命中（缓存链断裂）
+2. 当文件内容更改时，`COPY`/`ADD` 层失效
+3. 当命令或前一层更改时，`RUN` 层失效
+4. `ARG`/`ENV` 更改根据其在 Dockerfile 中的位置决定失效
 
-**Optimization strategy — order Dockerfile instructions by change frequency:**
+**优化策略 — 按更改频率排序 Dockerfile 指令：**
 ```
 # Rarely changes — cached almost always
 FROM node:20-slim
@@ -1759,288 +1521,272 @@ COPY dist/ ./dist/
 CMD ["node", "dist/index.js"]
 ```
 
-**GitHub Actions cache backend (`type=gha`):**
+**GitHub Actions 缓存后端（`type=gha`）：**
 
-The GHA cache backend stores build cache in GitHub's Actions cache infrastructure.
-Key characteristics:
-- **Scope:** Repository-level, shared across all workflows
-- **Persistence:** Up to 7 days since last access
-- **Size limit:** Varies by plan (free: 10GB, paid: included in minutes)
-- **Eviction:** Least Recently Used (LRU) when over limit
+GHA 缓存后端将构建缓存存储在 GitHub 的 Actions 缓存基础设施中。关键特性：
+- **范围：** 仓库级别，在所有工作流之间共享
+- **持久性：** 自上次访问起最多 7 天
+- **大小限制：** 因套餐而异（免费：10GB，付费：包含在分钟数中）
+- **驱逐策略：** 超过限制时，最近最少使用（LRU）算法
 
-**`mode=max` vs `mode=min` cache export:**
+**`mode=max` vs `mode=min` 缓存导出：**
 
-| Mode | Layers cached | Best for |
+| 模式 | 缓存的层 | 最适合 |
 |---|---|---|
-| `mode=max` | All intermediate layers | High churn, wants max reuse |
-| `mode=min` | Only final image layers | Stable Dockerfile, wants smaller cache |
+| `mode=max` | 所有中间层 | 高变更率，需要最大复用 |
+| `mode=min` | 仅最终镜像层 | Dockerfile 稳定，需要更小的缓存 |
 
-`mode=max` is recommended for CI because:
-- It caches ALL intermediate layers, not just the final image
-- When one layer changes, only that layer needs rebuilding
-- Subsequent builds rebuild in seconds instead of minutes
+`mode=max` 推荐用于 CI，因为：
+- 它缓存所有中间层，而不仅仅是最终镜像
+- 当一层更改时，只需要重建该层
+- 后续构建在几秒内完成，而非几分钟
 
-**Cache backends compared:**
+**缓存后端对比：**
 
-| Backend | Setup | Speed | Sharing | Cost |
+| 后端 | 设置 | 速度 | 共享 | 成本 |
 |---|---|---|---|---|
-| `type=gha` | Zero (built-in) | Fast | Same repo | Free |
-| `type=registry` | Registry auth | Medium | Any registry | Registry storage fees |
-| `type=local` | Local filesystem | Fastest | Self-hosted runners | Free |
-| `type=s3` | AWS credentials | Medium | Cross-CI | S3 storage |
-| `type=azblob` | Azure credentials | Medium | Cross-CI | Azure storage |
+| `type=gha` | 零（内置） | 快 | 同一仓库 | 免费 |
+| `type=registry` | 需要仓库认证 | 中等 | 任何仓库 | 仓库存储费用 |
+| `type=local` | 本地文件系统 | 最快 | 自托管运行器 | 免费 |
+| `type=s3` | AWS 凭据 | 中等 | 跨 CI | S3 存储费用 |
+| `type=azblob` | Azure 凭据 | 中等 | 跨 CI | Azure 存储费用 |
 
-### 14.4 Manifest Lists and Digest Pinning
+### 14.4 清单列表与摘要固定
 
-**What is a manifest list (OCI index)?**
+**什么是清单列表（OCI 索引）？**
 
-An OCI image index (commonly called a "manifest list" or "fat manifest") is a JSON
-document that references multiple platform-specific manifests. It is the mechanism
-that enables `docker pull` to automatically select the right image for any architecture.
+OCI 镜像索引（通常称为"清单列表"或"胖清单"）是一个 JSON 文档，引用多个平台特定的清单。它是使 `docker pull` 能够自动为任何架构选择正确镜像的机制。
 
-**Manifest list structure (OCI format):**
+**清单列表结构（OCI 格式）：**
 
-The OCI image index contains:
-- `mediaType`: Always `application/vnd.oci.image.index.v1+json`
-- `manifests`: Array of descriptor objects, each with:
-  - `mediaType`: Reference to the platform-specific manifest
-  - `digest`: SHA256 of the platform-specific manifest
-  - `size`: Size of the referenced manifest
-  - `platform`: OS, architecture, variant (e.g., `linux/arm64/v8`)
-  - `annotations`: Optional metadata
+OCI 镜像索引包含：
+- `mediaType`：始终为 `application/vnd.oci.image.index.v1+json`
+- `manifests`：描述符对象数组，每个包含：
+  - `mediaType`：对平台特定清单的引用
+  - `digest`：平台特定清单的 SHA256
+  - `size`：所引用清单的大小
+  - `platform`：操作系统、架构、变体（例如 `linux/arm64/v8`）
+  - `annotations`：可选元数据
 
-**Tag vs digest — fundamental difference:**
+**标签与摘要 — 根本区别：**
 
-| Property | Tag | Digest |
+| 属性 | 标签 | 摘要 |
 |---|---|---|
-| Mutable | Yes (can be overwritten) | No (content-addressed) |
-| Human-readable | Yes (`v1.2.3`) | No (`sha256:a1b2...`) |
-| Uniqueness | NOT unique (many tags, one image) | Unique (one digest, one image) |
-| Security | Tag hijacking possible | Immutable reference |
-| Pull syntax | `image:tag` | `image@sha256:...` |
+| 可变性 | 是（可被覆盖） | 否（内容寻址） |
+| 人类可读 | 是（`v1.2.3`） | 否（`sha256:a1b2...`） |
+| 唯一性 | 不唯一（多个标签，一个镜像） | 唯一（一个摘要，一个镜像） |
+| 安全性 | 可能被标签劫持 | 不可变引用 |
+| 拉取语法 | `image:tag` | `image@sha256:...` |
 
-**Why use digest pinning in production:**
+**为什么在生产中使用摘要固定：**
 
-1. **Immutability:** An image tagged `v1.2.3` today could be overwritten with different
-   content tomorrow. The digest `sha256:a1b2...` always refers to the same content.
+1. **不可变性：** 今天标记为 `v1.2.3` 的镜像明天可能被不同的内容覆盖。摘要 `sha256:a1b2...` 始终指向相同的内容。
 
-2. **Supply chain security:** If an attacker gains write access to the registry, they
-   can overwrite tags with compromised images. They cannot change the content behind
-   a digest without rebuilding.
+2. **供应链安全：** 如果攻击者获得镜像仓库的写入权限，他们可以用被篡改的镜像覆盖标签。他们无法在不重新构建的情况下更改摘要背后的内容。
 
-3. **Deployment consistency:** Every node in a cluster pulls the exact same image
-   content when using digest references. Tag-based pulls could race and get different
-   versions if a tag is updated during deployment.
+3. **部署一致性：** 使用摘要引用时，集群中的每个节点拉取完全相同的镜像内容。基于标签的拉取可能会在部署期间因标签更新而产生竞态条件，获取不同版本。
 
-4. **Verification:** Signatures are attached to digests, not tags. A verified signature
-   on a digest proves that EXACT content was signed.
+4. **验证：** 签名附加到摘要，而非标签。经过验证的摘要签名证明正是该内容被签名。
 
-### 14.5 OCI Annotations and Labels
+### 14.5 OCI 注解与标记
 
-OCI annotations are key-value metadata that can be attached to images, manifests, and
-indices. They are governed by the [OCI Image Spec](https://github.com/opencontainers/image-spec).
+OCI 注解是可以附加到镜像、清单和索引的键值元数据。它们由 [OCI Image Spec](https://github.com/opencontainers/image-spec) 规范定义。
 
-**Standard OCI annotations (pre-defined):**
+**标准 OCI 注解（预定义）：**
 
-| Annotation | Description |
+| 注解 | 描述 |
 |---|---|
-| `org.opencontainers.image.created` | Build timestamp (RFC 3339) |
-| `org.opencontainers.image.authors` | Contact information |
-| `org.opencontainers.image.url` | URL to find more info |
-| `org.opencontainers.image.documentation` | URL to documentation |
-| `org.opencontainers.image.source` | URL to source code |
-| `org.opencontainers.image.version` | Version of the packaged software |
-| `org.opencontainers.image.revision` | Source control revision (commit SHA) |
-| `org.opencontainers.image.vendor` | Vendor distributing the image |
-| `org.opencontainers.image.licenses` | SPDX license identifier |
-| `org.opencontainers.image.ref.name` | Reference name (tag-like) |
-| `org.opencontainers.image.title` | Human-readable title |
-| `org.opencontainers.image.description` | Human-readable description |
-| `org.opencontainers.image.base.digest` | Digest of the base image |
-| `org.opencontainers.image.base.name` | Reference of the base image |
+| `org.opencontainers.image.created` | 构建时间戳（RFC 3339） |
+| `org.opencontainers.image.authors` | 联系信息 |
+| `org.opencontainers.image.url` | 了解更多信息的 URL |
+| `org.opencontainers.image.documentation` | 文档 URL |
+| `org.opencontainers.image.source` | 源代码 URL |
+| `org.opencontainers.image.version` | 打包软件的版本 |
+| `org.opencontainers.image.revision` | 版本控制修订版本（提交 SHA） |
+| `org.opencontainers.image.vendor` | 分发镜像的供应商 |
+| `org.opencontainers.image.licenses` | SPDX 许可证标识符 |
+| `org.opencontainers.image.ref.name` | 引用名称（类似标签） |
+| `org.opencontainers.image.title` | 人类可读的标题 |
+| `org.opencontainers.image.description` | 人类可读的描述 |
+| `org.opencontainers.image.base.digest` | 基础镜像的摘要 |
+| `org.opencontainers.image.base.name` | 基础镜像的引用 |
 
-**How labels are used:**
+**标记的使用方式：**
 
-1. **Discovery:** Users can search for images by label in registries
-2. **Compliance:** Labels prove which version and source produced an image
-3. **Automation:** Tools can read labels to determine image provenance
-4. **Documentation:** Embedded metadata eliminates external lookup
+1. **发现：** 用户可以在镜像仓库中按标记搜索镜像
+2. **合规：** 标记证明哪个版本和来源产生了镜像
+3. **自动化：** 工具可以读取标记以确定镜像出处
+4. **文档：** 嵌入的元数据消除了外部查找的需要
 
-### 14.6 Cosign Keyless Signing
+### 14.6 Cosign 无密钥签名
 
-**The Sigstore ecosystem:**
+**Sigstore 生态系统：**
 
-Cosign is part of Sigstore, a set of tools for signing and verifying software. The
-ecosystem includes:
+Cosign 是 Sigstore 的一部分，Sigstore 是一套用于签名和验证软件的工具。生态系统包括：
 
-| Component | Role |
+| 组件 | 作用 |
 |---|---|
-| **Cosign** | CLI tool for signing container images and blobs |
-| **Fulcio** | Certificate Authority that issues short-lived code signing certs |
-| **Rekor** | Transparency log for recording signatures |
-| **Gitsign** | Git commit signing using Sigstore |
-| **Policy Controller** | Kubernetes admission controller for signature verification |
+| **Cosign** | 用于签名容器镜像和 blob 的 CLI 工具 |
+| **Fulcio** | 颁发短期代码签名证书的证书颁发机构（CA） |
+| **Rekor** | 用于记录签名的透明度日志 |
+| **Gitsign** | 使用 Sigstore 进行 Git 提交签名 |
+| **Policy Controller** | 用于签名验证的 Kubernetes 准入控制器 |
 
-**Keyless signing end-to-end flow:**
+**无密钥签名端到端流程：**
 
 ```
-1. Workflow starts → GitHub generates OIDC token
+1. 工作流启动 → GitHub 生成 OIDC 令牌
                          │
-2. cosign sign → Requests OIDC token from GitHub
+2. cosign sign → 向 GitHub 请求 OIDC 令牌
                          │
-3. Exchange with Fulcio → OIDC token proves identity
-     Fulcio issues short-lived X.509 cert
-     Cert includes: public key, OIDC identity, Fulcio chain
+3. 与 Fulcio 交换 → OIDC 令牌证明身份
+     Fulcio 颁发短期 X.509 证书
+     证书包含：公钥、OIDC 身份、Fulcio 链
                          │
-4. Cryptographically sign image digest
-     Using ephemeral private key (deleted after signing)
+4. 加密签名镜像摘要
+     使用临时私钥（签名后删除）
                          │
-5. Upload to registry: signature + cert + chain
-     Stored as separate manifest linked to image
+5. 上传到镜像仓库：签名 + 证书 + 链
+     作为与镜像关联的独立清单存储
                          │
-6. Rekor entry: hash of signature + cert + timestamp
-     Public ledger proves signature existed at this time
+6. Rekor 条目：签名 + 证书 + 时间戳的哈希
+     公开账本证明签名在此时间存在
 ```
 
-**What the signature proves:**
+**签名证明的内容：**
 
-When someone verifies the signature, they confirm:
-1. The image was signed by a holder of an ephemeral key bound to the OIDC identity
-2. The OIDC identity matches the expected workflow/repository
-3. The certificate was valid (within its short lifetime) when used
-4. The signature was recorded in Rekor at the claimed time
+当有人验证签名时，他们确认：
+1. 镜像由持有绑定到 OIDC 身份的临时密钥的人签名
+2. OIDC 身份与预期的工作流/仓库匹配
+3. 使用时证书是有效的（在其短生命周期内）
+4. 签名在声称的时间记录在 Rekor 中
 
-**What it does NOT prove:**
-- The image is free of vulnerabilities (use Trivy for that)
-- The image was reviewed by a human (two-person review covers that)
-- The build was hermetic/reproducible (SLSA L3+ covers that)
+**它不证明的内容：**
+- 镜像没有漏洞（应使用 Trivy）
+- 镜像经过了人工审查（两人审查覆盖这一点）
+- 构建是封闭/可重现的（SLSA L3+ 覆盖这一点）
 
-### 14.7 SLSA Provenance Levels
+### 14.7 SLSA 出处级别
 
-**SLSA (Supply-chain Levels for Software Artifacts)** is a security framework that
-defines increasing levels of supply chain security:
+**SLSA（软件产物的供应链级别）** 是一个安全框架，定义了递增的供应链安全级别：
 
-| Level | Requirements | This workflow |
+| 级别 | 要求 | 本工作流 |
 |---|---|---|
-| **L0** | No guarantees | |
-| **L1** | Build process documented | Yes (workflow file) |
-| **L2** | Signed provenance + OIDC auth | Yes (attest-build-provenance) |
-| **L3** | Hosted build + isolation | Partially (GitHub Actions is hosted) |
-| **L4** | Hermetic + two-person review + deps complete | No |
+| **L0** | 无保证 | |
+| **L1** | 构建过程已记录 | 是（工作流文件） |
+| **L2** | 签名的出处证明 + OIDC 认证 | 是（attest-build-provenance） |
+| **L3** | 托管构建 + 隔离 | 部分满足（GitHub Actions 是托管的） |
+| **L4** | 封闭构建 + 两人审查 + 完整依赖 | 否 |
 
-Our workflow achieves SLSA Build Level 2 because:
-- Provenance is generated as a cryptographically signed attestation
-- The attestation uses OIDC identity (not a shared secret)
-- The build is hosted on GitHub Actions (not a developer's laptop)
-- The source repo and commit are recorded
+我们的工作流达到 SLSA Build Level 2，因为：
+- 出处证明作为加密签名的证明生成
+- 证明使用 OIDC 身份（而非共享密钥）
+- 构建托管在 GitHub Actions 上（而非开发者的笔记本）
+- 源代码仓库和提交被记录
 
-To reach L3, we would need:
-- Build isolation (no network access during build)
-- Pre-declared dependencies
+要达到 L3，我们需要：
+- 构建隔离（构建期间无网络访问）
+- 预先声明的依赖关系
 
-To reach L4, we would additionally need:
-- Two-person review for all changes
-- Hermetic builds (no external network access)
-- Complete dependency graph
+要达到 L4，我们还需要：
+- 所有更改需两人审查
+- 封闭构建（无外部网络访问）
+- 完整的依赖关系图
 
-### 14.8 SBOM (Software Bill of Materials)
+### 14.8 SBOM（软件物料清单）
 
-**What an SBOM contains:**
+**SBOM 包含的内容：**
 
-An SPDX 2.3 SBOM for a container image includes:
+容器镜像的 SPDX 2.3 SBOM 包括：
 
-1. **Document information:** Creator (tool), created timestamp, SPDX version
-2. **Package information:** For every package in the image:
-   - Package name and version
-   - Package supplier (who created/curated it)
-   - Package download location
-   - Package license (SPDX identifier)
-   - Package copyright text
-   - External references (CVE URLs, homepages)
-3. **Relationship information:** How packages relate:
-   - `DESCENDANT_OF` — package derives from another
-   - `DEPENDENCY_OF` — package is a dependency
-   - `CONTAINS` — image contains this package
+1. **文档信息：** 创建者（工具）、创建时间戳、SPDX 版本
+2. **包信息：** 对于镜像中的每个包：
+   - 包名称和版本
+   - 包供应商（谁创建/维护了它）
+   - 包下载位置
+   - 包许可证（SPDX 标识符）
+   - 包版权文本
+   - 外部引用（CVE URL、主页）
+3. **关系信息：** 包之间的关系：
+   - `DESCENDANT_OF` — 包衍生自另一个包
+   - `DEPENDENCY_OF` — 包是一个依赖项
+   - `CONTAINS` — 镜像包含此包
 
-**Why SBOMs matter for security:**
+**SBOM 对安全的重要性：**
 
-1. **Vulnerability correlation:** When a new CVE is announced, you can check your SBOMs
-   to see if you're affected, without scanning each image individually
+1. **漏洞关联：** 当宣布新的 CVE 时，你可以检查你的 SBOM 以确定是否受影响，而无需逐个扫描每个镜像
 
-2. **License compliance:** Track which open-source licenses your dependencies use
+2. **许可证合规：** 跟踪你的依赖项使用的开源许可证
 
-3. **Supply chain transparency:** Know every component in your software, including
-   transitive dependencies
+3. **供应链透明度：** 了解软件中的每个组件，包括传递性依赖
 
-4. **Regulatory compliance:** Executive Order 14028 (US) and similar regulations require
-   SBOMs for government software
+4. **监管合规：** 美国行政命令 14028 及类似法规要求政府软件提供 SBOM
 
-### 14.9 Trivy Vulnerability Scanning
+### 14.9 Trivy 漏洞扫描
 
-**How Trivy works:**
+**Trivy 的工作原理：**
 
-Trivy maintains a local vulnerability database that aggregates data from:
-- NVD (National Vulnerability Database)
-- RedHat CVE database
-- Debian Security Tracker
-- Alpine CVE database
-- GitHub Security Advisories (GHSA)
-- OSV (Open Source Vulnerabilities)
-- AWS ECR vulnerability data
-- Go Vulnerability Database
-- RustSec Advisory Database
-- Photon CVE database
-- SUSE CVRF/CVE database
-- Ubuntu CVE Tracker
-- Chainguard CVE database
+Trivy 维护一个本地漏洞数据库，聚合来自以下来源的数据：
+- NVD（美国国家漏洞数据库）
+- RedHat CVE 数据库
+- Debian 安全跟踪器
+- Alpine CVE 数据库
+- GitHub 安全公告（GHSA）
+- OSV（开源漏洞）
+- AWS ECR 漏洞数据
+- Go 漏洞数据库
+- RustSec 公告数据库
+- Photon CVE 数据库
+- SUSE CVRF/CVE 数据库
+- Ubuntu CVE 跟踪器
+- Chainguard CVE 数据库
 
-For each package in the image, Trivy:
-1. Identifies the package name and version
-2. Looks up the package in its vulnerability database
-3. Returns any CVEs that affect this version
-4. Applies severity filters and fix-availability filters
-5. Reports the results in the requested format
+对于镜像中的每个包，Trivy：
+1. 识别包名称和版本
+2. 在其漏洞数据库中查找包
+3. 返回影响此版本的所有 CVE
+4. 应用严重级别过滤器和修复可用性过滤器
+5. 以请求的格式报告结果
 
-**Scanners available in Trivy:**
+**Trivy 可用的扫描器：**
 
-| Scanner | What it detects | Example findings |
+| 扫描器 | 检测内容 | 示例发现 |
 |---|---|---|
-| `vuln` | Known vulnerabilities | CVE-2024-1234 in curl |
-| `secret` | Hardcoded secrets | AWS keys, GitHub tokens |
-| `misconfig` | Infrastructure misconfigs | Container running as root |
+| `vuln` | 已知漏洞 | curl 中的 CVE-2024-1234 |
+| `secret` | 硬编码的密钥 | AWS 密钥、GitHub 令牌 |
+| `misconfig` | 基础设施配置错误 | 容器以 root 身份运行 |
 
 ### 14.10 Docker Scout
 
-**How Docker Scout differs from Trivy:**
+**Docker Scout 与 Trivy 的区别：**
 
-Docker Scout is a policy-based analysis tool that:
-- Analyzes image layers and package inventory
-- Provides policy evaluation (not just CVE listing)
-- Offers actionable recommendations (base image upgrades)
-- Integrates with Docker Hub and Docker Desktop
-- Has a separate vulnerability database
+Docker Scout 是一个基于策略的分析工具，它：
+- 分析镜像层和包清单
+- 提供策略评估（不仅仅是 CVE 列表）
+- 提供可操作的建议（基础镜像升级）
+- 与 Docker Hub 和 Docker Desktop 集成
+- 拥有独立的漏洞数据库
 
-**Scout commands:**
+**Scout 命令：**
 
-| Command | Description |
+| 命令 | 描述 |
 |---|---|
-| `quickview` | Summary of vulnerabilities by severity |
-| `compare` | Compare image against baseline |
-| `recommendations` | Suggest actions to reduce vulnerabilities |
-| `policy` | Evaluate against organization's security policy |
-| `cves` | Detailed CVE information |
-| `sync` | Sync image to Scout for remote analysis |
+| `quickview` | 按严重级别汇总漏洞 |
+| `compare` | 将镜像与基线进行比较 |
+| `recommendations` | 建议减少漏洞的操作 |
+| `policy` | 针对组织的安全策略进行评估 |
+| `cves` | 详细的 CVE 信息 |
+| `sync` | 同步镜像到 Scout 进行远程分析 |
 
 ---
 
-## 15. GitHub Actions Concepts Reference
+## 15. GitHub Actions 概念参考
 
-### 15.1 workflow_dispatch with Typed Inputs
+### 15.1 带类型输入的工作流调度（workflow_dispatch）
 
-`workflow_dispatch` enables manual triggering of workflows with user-provided inputs.
-The input types render as native HTML form elements in the GitHub Actions UI:
+`workflow_dispatch` 允许使用用户提供的输入手动触发工作流。输入类型在 GitHub Actions UI 中呈现为原生 HTML 表单元素：
 
-**String input** renders as a text field:
+**字符串输入**呈现为文本字段：
 ```yaml
 platforms:
   description: 'Target platforms'
@@ -2049,7 +1795,7 @@ platforms:
   type: string
 ```
 
-**Boolean input** renders as a checkbox:
+**布尔输入**呈现为复选框：
 ```yaml
 skip-scan:
   description: 'Skip vulnerability scan'
@@ -2058,7 +1804,7 @@ skip-scan:
   type: boolean
 ```
 
-**Choice input** renders as a dropdown:
+**选择输入**呈现为下拉菜单：
 ```yaml
 environment:
   description: 'Target environment'
@@ -2069,42 +1815,38 @@ environment:
     - production
 ```
 
-Inputs are accessed via `${{ github.event.inputs.<name> }}`. Important: all inputs
-are STRINGS, even boolean ones. Compare boolean inputs as strings:
+输入通过 `${{ github.event.inputs.<name> }}` 访问。重要提示：所有输入都是字符串，即使是布尔类型也是如此。比较布尔输入时应使用字符串比较：
 ```yaml
 if: ${{ github.event.inputs.skip-scan != 'true' }}
 ```
 
-### 15.2 Permissions Block
+### 15.2 权限块
 
-The `permissions` block controls the GITHUB_TOKEN's scope. By default, the token has
-only `contents: read` in repositories without GitHub Pages.
+`permissions` 块控制 GITHUB_TOKEN 的作用域。默认情况下，在没有 GitHub Pages 的仓库中，令牌只有 `contents: read` 权限。
 
-**Permission scopes used in this workflow:**
+**此工作流中使用的权限范围：**
 
-| Scope | Operations |
+| 范围 | 操作 |
 |---|---|
-| `contents: write` | Create releases, upload assets, push tags |
-| `packages: write` | Push images to GHCR, manage package versions |
-| `id-token: write` | Request OIDC token for Cosign/SLSA |
-| `attestations: write` | Store build provenance attestations |
-| `security-events: write` | Upload SARIF to Security tab |
+| `contents: write` | 创建 release、上传资产、推送标签 |
+| `packages: write` | 推送镜像到 GHCR、管理包版本 |
+| `id-token: write` | 请求 OIDC 令牌用于 Cosign/SLSA |
+| `attestations: write` | 存储构建出处证明 |
+| `security-events: write` | 上传 SARIF 到 Security 选项卡 |
 
-**Minimal permissions pattern:** Always use the principle of least privilege. Start
-with minimal permissions and add only what's needed:
+**最小权限模式：** 始终遵循最小权限原则。从最小权限开始，仅添加所需内容：
 
 ```yaml
 permissions:
-  contents: read     # Default — checkout source
-  # ... add only what your workflow needs
+  contents: read     # 默认 — 检出源码
+  # ... 仅添加你的工作流需要的内容
 ```
 
-### 15.3 Job Outputs
+### 15.3 作业输出
 
-Jobs can pass data to downstream jobs through `outputs`. This is essential for
-passing digests, tags, and version information between jobs.
+作业可以通过 `outputs` 将数据传递给下游作业。这对于在作业之间传递摘要、标签和版本信息至关重要。
 
-**Defining outputs (in the producing job):**
+**定义输出（在产生数据的作业中）：**
 ```yaml
 job-name:
   outputs:
@@ -2114,7 +1856,7 @@ job-name:
       run: echo "my-value=some-data" >> "$GITHUB_OUTPUT"
 ```
 
-**Consuming outputs (in downstream jobs):**
+**消费输出（在下游作业中）：**
 ```yaml
 downstream-job:
   needs: job-name
@@ -2122,160 +1864,146 @@ downstream-job:
     - run: echo "${{ needs.job-name.outputs.my-output }}"
 ```
 
-**Rules for job outputs:**
-1. Outputs must be declared in the `outputs:` block of the job
-2. Values come from steps via `$GITHUB_OUTPUT`
-3. Outputs are strings only (no complex objects)
-4. Outputs are available to any job that declares `needs: <producer>`
-5. Outputs are read-only — downstream jobs cannot modify them
+**作业输出规则：**
+1. 输出必须在作业的 `outputs:` 块中声明
+2. 值通过 `$GITHUB_OUTPUT` 从步骤中获取
+3. 输出只能是字符串（不支持复杂对象）
+4. 任何声明了 `needs: <producer>` 的作业都可以访问输出
+5. 输出是只读的 — 下游作业不能修改它们
 
-### 15.4 Needs (Job Dependencies)
+### 15.4 Needs（作业依赖）
 
-The `needs:` keyword creates a dependency between jobs, forming a Directed Acyclic
-Graph (DAG). GitHub Actions automatically parallelizes jobs that have no dependency
-relationship.
+`needs:` 关键字在作业之间创建依赖关系，形成有向无环图（DAG）。GitHub Actions 自动并行化没有依赖关系的作业。
 
-**Single dependency:**
+**单一依赖：**
 ```yaml
 job-b:
   needs: job-a
 ```
-Job-b starts only after job-a completes successfully.
+Job-b 仅在 job-a 成功完成后启动。
 
-**Multiple dependencies:**
+**多重依赖：**
 ```yaml
 job-c:
   needs: [job-a, job-b]
 ```
-Job-c starts only after BOTH job-a and job-b complete.
+Job-c 仅在 job-a 和 job-b 都完成后启动。
 
-**Implicit parallelism:** Jobs `docker-lint` and `metadata` both depend on
-`docker-setup` but not on each other, so they run in parallel automatically.
+**隐式并行：** `docker-lint` 和 `metadata` 作业都依赖 `docker-setup`，但互不依赖，因此它们自动并行运行。
 
-**DAG execution rules:**
-1. Jobs with no `needs:` start immediately (root-level jobs)
-2. Jobs with a single `needs:` start when that job finishes
-3. Jobs with multiple `needs:` wait for ALL dependencies to finish
-4. If a dependency fails, dependent jobs are skipped (unless `if: always()`)
-5. Circular dependencies are detected at parse time and cause an error
+**DAG 执行规则：**
+1. 没有 `needs:` 的作业立即启动（根级作业）
+2. 单一 `needs:` 的作业在依赖作业完成后启动
+3. 多个 `needs:` 的作业等待所有依赖完成
+4. 如果依赖失败，依赖作业将被跳过（除非 `if: always()`）
+5. 循环依赖在解析时被检测到并导致错误
 
-### 15.5 if: Conditions
+### 15.5 if: 条件
 
-The `if:` keyword controls whether a job or step runs. It evaluates a GitHub
-expression and runs only when the expression is truthy.
+`if:` 关键字控制作业或步骤是否运行。它评估 GitHub 表达式，仅当表达式为真时才运行。
 
-**Job-level conditions (skip entire job):**
+**作业级条件（跳过整个作业）：**
 ```yaml
 image-scan:
   if: ${{ github.event.inputs.skip-scan != 'true' }}
 ```
 
-**Step-level conditions (skip individual steps):**
+**步骤级条件（跳过单个步骤）：**
 ```yaml
 - name: Upload SARIF
-  if: always()  # Run even if previous steps failed
+  if: always()  # 即使前面的步骤失败也运行
 ```
 
-**Common conditional expressions:**
+**常用条件表达式：**
 
-| Expression | Evaluation |
+| 表达式 | 评估结果 |
 |---|---|
-| `always()` | Always run, even if dependencies failed |
-| `success()` | Run only if all prior steps succeeded (default) |
-| `failure()` | Run only if a prior step failed |
-| `cancelled()` | Run only if the run was cancelled |
-| `github.ref == 'refs/heads/main'` | Only on main branch |
-| `startsWith(github.ref, 'refs/tags/')` | Only for tag pushes |
-| `github.event_name == 'release'` | Only when triggered by release |
-| `contains(github.event.issue.labels.*.name, 'bug')` | Issue has 'bug' label |
+| `always()` | 始终运行，即使依赖项失败 |
+| `success()` | 仅当前面所有步骤都成功时运行（默认） |
+| `failure()` | 仅当前面有步骤失败时运行 |
+| `cancelled()` | 仅在运行被取消时运行 |
+| `github.ref == 'refs/heads/main'` | 仅在 main 分支 |
+| `startsWith(github.ref, 'refs/tags/')` | 仅用于标签推送 |
+| `github.event_name == 'release'` | 仅当由 release 触发时 |
+| `contains(github.event.issue.labels.*.name, 'bug')` | Issue 有 'bug' 标签 |
 
-**Important:** In YAML, bare `if:` values like `if: always()` might be parsed as
-booleans. Always wrap GitHub expressions in `${{ }}`:
+**重要提示：** 在 YAML 中，裸露的 `if:` 值如 `if: always()` 可能被解析为布尔值。始终将 GitHub 表达式包裹在 `${{ }}` 中：
 ```yaml
 if: ${{ always() }}
 ```
-Without `${{ }}`, YAML might interpret `always()` as a string or throw an error.
+没有 `${{ }}`，YAML 可能将 `always()` 解释为字符串或抛出错误。
 
-### 15.6 env for Default Values
+### 15.6 用于默认值的 env
 
-The `env:` block at workflow, job, or step level sets environment variables:
+工作流、作业或步骤级别的 `env:` 块用于设置环境变量：
 
 ```yaml
 env:
-  REGISTRY: ghcr.io           # Workflow-level default
+  REGISTRY: ghcr.io           # 工作流级默认值
   TRIVY_SEVERITY: CRITICAL,HIGH
 
 job:
   env:
-    JOB_VAR: value            # Job-level override
+    JOB_VAR: value            # 作业级覆盖
   steps:
     - env:
-        STEP_VAR: value       # Step-level override
+        STEP_VAR: value       # 步骤级覆盖
       run: echo $STEP_VAR
 ```
 
-**Variable precedence (highest wins):**
-1. Step-level `env:` — overrides all
-2. Job-level `env:` — overrides workflow defaults
-3. Workflow-level `env:` — baseline
-4. Environment variable set via `$GITHUB_ENV` in a step
+**变量优先级（最高优先）：**
+1. 步骤级 `env:` — 覆盖所有
+2. 作业级 `env:` — 覆盖工作流默认值
+3. 工作流级 `env:` — 基准
+4. 通过在步骤中使用 `$GITHUB_ENV` 设置的环境变量
 
-### 15.7 Expression Syntax
+### 15.7 表达式语法
 
-**`${{ }}` syntax rules:**
+**`${{ }}` 语法规则：**
 
-Inside `${{ }}`, you can use:
-- Literals: strings (in quotes), numbers, booleans
-- Context objects: `github.*`, `env.*`, `needs.*`, `steps.*`, `secrets.*`, `inputs.*`
-- Functions: `contains()`, `startsWith()`, `endsWith()`, `format()`, `join()`, `hashFiles()`
-- Operators: `==`, `!=`, `&&`, `||`, `!`, `<`, `>`, `+`, `-`, `*`, `/`
+在 `${{ }}` 内部，可以使用：
+- 字面量：字符串（用引号）、数字、布尔值
+- 上下文对象：`github.*`、`env.*`、`needs.*`、`steps.*`、`secrets.*`、`inputs.*`
+- 函数：`contains()`、`startsWith()`、`endsWith()`、`format()`、`join()`、`hashFiles()`
+- 运算符：`==`、`!=`、`&&`、`||`、`!`、`<`、`>`、`+`、`-`、`*`、`/`
 
-**Important rules:**
-1. `${{ }}` is evaluated BEFORE the step runs (at parse time for `if:`, at runtime for
-   step content)
-2. Shell commands inside `run:` that use `${{ }}` have the expressions evaluated before
-   the shell sees them
-3. Always quote expressions in shell contexts: `echo "${{ env.REGISTRY }}"` (not
-   `echo ${{ env.REGISTRY }}` which could break if the value contains spaces)
+**重要规则：**
+1. `${{ }}` 在步骤运行之前被评估（对于 `if:` 在解析时，对于步骤内容在运行时）
+2. `run:` 中使用 `${{ }}` 的 Shell 命令，在 Shell 看到它们之前表达式已被评估
+3. 始终在 Shell 上下文中引用表达式：`echo "${{ env.REGISTRY }}"`（而不是 `echo ${{ env.REGISTRY }}`，后者在值包含空格时可能出错）
 
-**`secrets` context:**
+**`secrets` 上下文：**
 
-Secrets are accessed via `${{ secrets.SECRET_NAME }}`. The GITHUB_TOKEN is always
-available as `${{ secrets.GITHUB_TOKEN }}`. Other secrets must be configured in
-repository Settings > Secrets and variables > Actions.
+密钥通过 `${{ secrets.SECRET_NAME }}` 访问。GITHUB_TOKEN 始终可通过 `${{ secrets.GITHUB_TOKEN }}` 获取。其他密钥必须在仓库的 Settings > Secrets and variables > Actions 中配置。
 
-**`needs` context for cross-job references:**
+**用于跨作业引用的 `needs` 上下文：**
 
 ```yaml
 ${{ needs.metadata.outputs.tags }}
 ${{ needs.build-push.outputs.digest }}
 ```
 
-The structure is: `needs.<job-id>.outputs.<output-name>`.
+结构为：`needs.<job-id>.outputs.<output-name>`。
 
-### 15.8 OIDC Authentication
+### 15.8 OIDC 认证
 
-**What is OIDC and why is it needed?**
+**什么是 OIDC，为什么需要它？**
 
-OpenID Connect (OIDC) is an identity layer on top of the OAuth 2.0 protocol. In
-GitHub Actions, OIDC allows the workflow to obtain a token that proves its identity
-to external services (like Sigstore's Fulcio) WITHOUT storing any long-lived secrets.
+OpenID Connect（OIDC，开放ID连接）是 OAuth 2.0 协议之上的身份层。在 GitHub Actions 中，OIDC 允许工作流获取一个令牌，向外部服务（如 Sigstore 的 Fulcio）证明其身份，而无需存储任何长期有效的密钥。
 
-**How OIDC works in GitHub Actions:**
+**OIDC 在 GitHub Actions 中的工作原理：**
 
 ```yaml
 permissions:
-  id-token: write    # Required for OIDC token generation
+  id-token: write    # OIDC 令牌生成所需
 ```
 
-When `id-token: write` is set:
-1. GitHub Actions exposes an OIDC token endpoint at a URL stored in the environment
-   variable `ACTIONS_ID_TOKEN_REQUEST_URL`
-2. The workflow requests a token from this endpoint, providing a proof of the workflow
-   run's identity (repository, ref, run ID)
-3. External services can verify this token using GitHub's OIDC public keys
+当设置了 `id-token: write` 时：
+1. GitHub Actions 暴露一个 OIDC 令牌端点，URL 存储在环境变量 `ACTIONS_ID_TOKEN_REQUEST_URL` 中
+2. 工作流向此端点请求令牌，提供工作流运行身份的证明（仓库、引用、运行 ID）
+3. 外部服务可以使用 GitHub 的 OIDC 公钥验证此令牌
 
-**What the OIDC token contains (claims):**
+**OIDC 令牌包含的内容（声明）：**
 
 ```json
 {
@@ -2290,37 +2018,35 @@ When `id-token: write` is set:
 }
 ```
 
-For Cosign, the critical claims are:
-- `job_workflow_ref` — Which workflow file is running
-- `repository` — Which repository triggered the run
-- `ref` — Which branch/tag triggered the run
+对于 Cosign，关键声明是：
+- `job_workflow_ref` — 正在运行哪个工作流文件
+- `repository` — 哪个仓库触发了运行
+- `ref` — 哪个分支/标签触发了运行
 
-These claims are embedded in the Fulcio certificate during signing and extracted
-during verification.
+这些声明在签名期间嵌入到 Fulcio 证书中，并在验证期间提取。
 
 ---
 
-## Quick Reference: Key Files Created
+## 快速参考：创建的关键文件
 
-| File | Purpose |
+| 文件 | 用途 |
 |---|---|
-| `.github/workflows/docker-full-lifecycle.yml` | The workflow definition |
-| `.github/workflow-lab/docs/workflow-2-docker-lifecycle.md` | This documentation |
+| `.github/workflows/docker-full-lifecycle.yml` | 工作流定义 |
+| `.github/workflow-lab/docs/workflow-2-docker-lifecycle.md` | 本文档 |
 
-## End of Document
+## 文档结束
 
 ---
 
-## 16. Extended Dockerfile Optimization Guide
+## 16. Dockerfile 扩展优化指南
 
-### 16.1 Base Image Selection
+### 16.1 基础镜像选择
 
-Choosing the right base image is one of the most consequential decisions in Docker development.
-The base image determines the security surface, image size, build time, and runtime behavior.
+选择正确的基础镜像是 Docker 开发中最重要的决策之一。基础镜像决定了安全面、镜像大小、构建时间和运行时行为。
 
-**Image size comparison (approximate, for a Node.js app):**
+**镜像大小对比（近似值，针对 Node.js 应用）：**
 
-| Base Image | Approx Size | Packages | Use Case |
+| 基础镜像 | 近似大小 | 包含包 | 使用场景 |
 |---|---|---|---|
 | `node:22` (full) | ~1.1 GB | Full build toolchain | Development, CI |
 | `node:22-slim` | ~250 MB | Minimal + glibc | Production (needs glibc) |
@@ -2328,7 +2054,7 @@ The base image determines the security surface, image size, build time, and runt
 | `node:22-bookworm-slim` | ~260 MB | Debian 12 slim | Production (Debian base) |
 | `scratch` (distroless) | ~0 MB | Nothing | Go binary, static apps |
 
-**Recommendations:**
+**建议：**
 - Use `-slim` variants for general production use — they strip unnecessary packages while
   retaining glibc compatibility
 - Use Alpine for smallest possible images, but test thoroughly — musl libc can cause
@@ -2336,17 +2062,15 @@ The base image determines the security surface, image size, build time, and runt
 - Use `bookworm-slim` or `bullseye-slim` (Debian-based) when you need specific apt packages
 - Avoid `:latest` — pin to a specific version tag or better, a digest
 
-**Security considerations:**
+**安全考虑：**
 - Smaller images = fewer packages = smaller attack surface
 - Each package in the image is a potential CVE vector
 - Alpine images typically have fewer CVEs because they have fewer packages
 - Regular base image updates are critical — a patched base image fixes hundreds of CVEs
 
-### 16.2 Multi-Stage Builds
+### 16.2 多阶段构建
 
-Multi-stage builds use multiple `FROM` statements in a single Dockerfile. Only the final
-stage produces the runtime image; earlier stages are for building and can use different
-base images with full toolchains.
+多阶段构建在单个 Dockerfile 中使用多个 `FROM` 语句。只有最后一个阶段生成运行时镜像；前面的阶段用于构建，可以使用具有完整工具链的不同基础镜像。
 
 ```dockerfile
 # Stage 1: Build
@@ -2368,19 +2092,15 @@ EXPOSE 3000
 CMD ["node", "dist/index.js"]
 ```
 
-**Benefits of multi-stage builds:**
-1. **Dramatically smaller images:** The final image only contains runtime dependencies, not
-   the TypeScript compiler, dev dependencies, or build tools
-2. **Different base images per stage:** Use `node:22` (full) for building (needs compiler),
-   `node:22-slim` for production (minimal)
-3. **Security isolation:** Build tools with known vulnerabilities (like older npm versions)
-   are excluded from the final image
-4. **COPY --from selects precise artifacts:** Only copy the specific files needed —
-   no build context pollution
+**多阶段构建的好处：**
+1. **显著更小的镜像：** 最终镜像仅包含运行时依赖项，不包含 TypeScript 编译器、开发依赖项或构建工具
+2. **每个阶段使用不同的基础镜像：** 构建阶段使用 `node:22`（完整版，需要编译器），生产阶段使用 `node:22-slim`（最小化）
+3. **安全隔离：** 具有已知漏洞的构建工具（如较旧版本的 npm）被排除在最终镜像之外
+4. **COPY --from 选择精确的产物：** 仅复制所需的特定文件 — 不污染构建上下文
 
-### 16.3 Layer Optimization Strategies
+### 16.3 层优化策略
 
-**Combine related operations to reduce layer count:**
+**合并相关操作以减少层数：**
 
 ```dockerfile
 # BAD — 4 layers, 4x the space for apt lists
@@ -2395,7 +2115,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 ```
 
-**Leverage Docker cache mounts for package managers:**
+**利用 Docker 缓存挂载来优化包管理器：**
 
 ```dockerfile
 # Cache npm packages across builds (BuildKit only)
@@ -2407,7 +2127,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
     apt-get update && apt-get install -y curl
 ```
 
-**Optimize COPY order for maximum cache hits:**
+**优化 COPY 顺序以获得最大缓存命中：**
 
 ```dockerfile
 # 1. First, copy dependency definitions (changes rarely)
@@ -2418,11 +2138,9 @@ RUN npm ci
 COPY . .
 ```
 
-### 16.4 Non-Root User Best Practices
+### 16.4 非 root 用户最佳实践
 
-Running containers as root is a well-known security antipattern. If an attacker exploits
-an application vulnerability in a root-running container, they gain root access to the
-container and potentially the host system.
+以 root 身份运行容器是一个众所周知的安全反模式。如果攻击者利用以 root 身份运行的容器中的应用程序漏洞，他们将获得容器的 root 访问权限，并可能获得宿主系统的访问权限。
 
 ```dockerfile
 # Create a non-root user
@@ -2435,36 +2153,35 @@ COPY --chown=app:app . .
 USER app
 ```
 
-**Why this matters:**
-- Containers running as root have the same capabilities as root on the host (with caveats)
-- A compromised root container can escape to the host via kernel exploits
-- Non-root users cannot bind to privileged ports (<1024) — Kubernetes can map them
-- Many security scanners (including Trivy) flag root containers as HIGH severity
+**为什么这很重要：**
+- 以 root 身份运行的容器具有与宿主机 root 相同的权限（有些限制）
+- 被攻破的 root 容器可以通过内核漏洞逃逸到宿主机
+- 非 root 用户无法绑定特权端口（<1024）— Kubernetes 可以映射这些端口
+- 许多安全扫描器（包括 Trivy）将 root 容器标记为 HIGH 严重级别
 
-### 16.5 HEALTHCHECK Instruction
+### 16.5 HEALTHCHECK 指令
 
-The `HEALTHCHECK` instruction tells Docker how to test if the container is functioning:
+`HEALTHCHECK` 指令告诉 Docker 如何测试容器是否正常运行：
 
 ```dockerfile
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
 ```
 
-**Parameters:**
-- `--interval=30s`: Check every 30 seconds
-- `--timeout=3s`: Each check must complete within 3 seconds
-- `--start-period=5s`: Wait 5 seconds before first check (grace period)
-- `--retries=3`: Mark as unhealthy after 3 consecutive failures
+**参数：**
+- `--interval=30s`：每 30 秒检查一次
+- `--timeout=3s`：每次检查必须在 3 秒内完成
+- `--start-period=5s`：首次检查前等待 5 秒（宽限期）
+- `--retries=3`：连续 3 次失败后标记为不健康
 
-Health checks enable:
-- Docker's orchestration to restart unhealthy containers
-- Load balancers to route traffic away from failing instances
-- Rollback triggers in deployment systems
+健康检查可以实现：
+- Docker 编排自动重启不健康的容器
+- 负载均衡器将流量从不健康的实例路由走
+- 部署系统中的回滚触发器
 
-### 16.6 Dockerignore File
+### 16.6 Dockerignore 文件
 
-A `.dockerignore` file excludes files from the Docker build context, similar to
-`.gitignore`. This improves build performance and security:
+`.dockerignore` 文件用于从 Docker 构建上下文中排除文件，类似于 `.gitignore`。这可以提高构建性能和安全性：
 
 ```dockerignore
 .git
@@ -2488,240 +2205,231 @@ coverage/
 dist/          # If building inside Docker, exclude pre-built
 ```
 
-**Benefits:**
-- **Smaller build context:** Faster upload from client to BuildKit daemon
-- **Security:** Exclude secrets like `.env` files
-- **Cache efficiency:** Excluding unnecessary files prevents cache invalidation from
-  unrelated file changes
-- **Faster builds:** BuildKit has less data to process
+**好处：**
+- **更小的构建上下文：** 从客户端到 BuildKit 守护进程的上传速度更快
+- **安全性：** 排除诸如 `.env` 文件之类的密钥
+- **缓存效率：** 排除不必要的文件可防止无关文件更改导致的缓存失效
+- **更快的构建：** BuildKit 需要处理的数据更少
 
 ---
 
-## 17. Security Hardening Guide
+## 17. 安全加固指南
 
-### 17.1 Defense in Depth Strategy
+### 17.1 纵深防御策略
 
-This workflow implements multiple layers of security:
+本工作流实现了多层安全防护：
 
-| Layer | Tool/Mechanism | What It Prevents |
+| 层 | 工具/机制 | 防止什么 |
 |---|---|---|
-| Code analysis | Hadolint (docker-lint) | Dockerfile anti-patterns |
-| Vulnerability scan | Trivy (image-scan) | Known CVEs in packages |
-| Policy evaluation | Docker Scout (image-scan) | Policy violations |
-| Immutable reference | Digest pinning (verify-image) | Tag hijacking |
-| Signature verification | Cosign verify (verify-image) | Image tampering |
-| Supply chain attestation | SLSA provenance (sbom-attest) | Build origin fraud |
-| Component inventory | SBOM (sbom-attest) | Unknown dependencies |
+| 代码分析 | Hadolint（docker-lint） | Dockerfile 反模式 |
+| 漏洞扫描 | Trivy（image-scan） | 包中的已知 CVE |
+| 策略评估 | Docker Scout（image-scan） | 策略违规 |
+| 不可变引用 | 摘要固定（verify-image） | 标签劫持 |
+| 签名验证 | Cosign verify（verify-image） | 镜像篡改 |
+| 供应链证明 | SLSA 出处证明（sbom-attest） | 构建来源欺诈 |
+| 组件清单 | SBOM（sbom-attest） | 未知依赖 |
 
-### 17.2 Supply Chain Security Checklist
+### 17.2 供应链安全清单
 
-For a production-grade supply chain security posture, verify all of these:
+要达到生产级供应链安全状态，请验证所有以下项目：
 
-- [ ] Base images are pinned to specific digests, not tags
-- [ ] All apt/apk packages are version-pinned
-- [ ] Container runs as non-root user
-- [ ] No secrets (API keys, tokens) baked into image layers
-- [ ] Layer cache does not leak secrets (use `--mount=type=secret` for BuildKit)
-- [ ] Image is scanned for CVEs before every release
-- [ ] Image is signed (Cosign) before push
-- [ ] SBOM is generated and attached to the release
-- [ ] SLSA provenance attestation exists for every release
-- [ ] Signature is verified before deployment
-- [ ] `.dockerignore` excludes sensitive files
-- [ ] Only production dependencies are included in the final image
+- [ ] 基础镜像固定到特定摘要，而非标签
+- [ ] 所有 apt/apk 包已固定版本
+- [ ] 容器以非 root 用户运行
+- [ ] 镜像层中没有嵌入密钥（API 密钥、令牌）
+- [ ] 层缓存不泄露密钥（对 BuildKit 使用 `--mount=type=secret`）
+- [ ] 每次发布前对镜像进行 CVE 扫描
+- [ ] 推送前使用 Cosign 签名镜像
+- [ ] 生成 SBOM 并附加到 release
+- [ ] 每次发布都有 SLSA 出处证明
+- [ ] 部署前验证签名
+- [ ] `.dockerignore` 排除敏感文件
+- [ ] 最终镜像仅包含生产依赖项
 
 ---
 
-## 18. Troubleshooting Guide
+## 18. 故障排除指南
 
-### 18.1 Build Failures
+### 18.1 构建失败
 
-**"no matching manifest for linux/arm64 in the manifest list entries"**
+**"manifest list entries 中没有匹配 linux/arm64 的清单"**
 
-_Cause:_ The base image does not support the target architecture. Not all images
-published to Docker Hub include arm64 variants.
+_原因：_ 基础镜像不支持目标架构。并非所有发布到 Docker Hub 的镜像都包含 arm64 变体。
 
-_Solution:_
-- Check the base image's supported architectures: `docker buildx imagetools inspect <image>`
-- Switch to a base image that supports both architectures
-- For official images (node, python, alpine, ubuntu), multi-arch support is nearly universal
-- For third-party images, check the image's README for architecture support
+_解决方案：_
+- 检查基础镜像支持的架构：`docker buildx imagetools inspect <image>`
+- 切换到支持两种架构的基础镜像
+- 对于官方镜像（node、python、alpine、ubuntu），多架构支持几乎是通用的
+- 对于第三方镜像，检查镜像的 README 了解架构支持情况
 
 **"buildx failed with: ERROR: multiple platforms feature is not supported"**
 
-_Cause:_ The `docker` driver is being used instead of `docker-container`.
+_原因：_ 使用了 `docker` 驱动而不是 `docker-container` 驱动。
 
-_Solution:_ Ensure `setup-buildx-action` is configured with `driver: docker-container`.
-The docker driver does not support multi-architecture builds.
+_解决方案：_ 确保 `setup-buildx-action` 配置了 `driver: docker-container`。docker 驱动不支持多架构构建。
 
 **"failed to push: denied: resource not accessible"**
 
-_Cause:_ The GITHUB_TOKEN does not have sufficient permissions.
+_原因：_ GITHUB_TOKEN 没有足够的权限。
 
-_Solution:_
-- Verify `permissions:` includes `packages: write`
-- Check if the repository has a package already created at the target name
-- For GHCR, the package is auto-created on first push if permissions are correct
+_解决方案：_
+- 验证 `permissions:` 包含 `packages: write`
+- 检查仓库是否已在目标名称下创建了包
+- 对于 GHCR，如果权限正确，首次推送时会自动创建包
 
-### 18.2 Cache Misses
+### 18.2 缓存未命中
 
 **"cache miss: no cache entry found for key"**
 
-_Cause:_ The first run on a new branch, or the cache was evicted.
+_原因：_ 新分支上的首次运行，或缓存已被驱逐。
 
-_Impact:_ Build takes longer (full rebuild) but still succeeds.
+_影响：_ 构建时间更长（完全重建），但仍可成功。
 
-_Solution:_
-- This is expected behavior for first runs
-- Subsequent runs on the same branch will hit the cache
-- For frequently evicted caches, consider adding `mode=max` to export more layers
+_解决方案：_
+- 这是首次运行的预期行为
+- 同一分支上的后续运行将命中缓存
+- 对于频繁被驱逐的缓存，考虑添加 `mode=max` 以导出更多层
 
 **"cache import failed: specified credentials could not be used"**
 
-_Cause:_ Registry authentication issue when using `type=registry` cache backend.
+_原因：_ 使用 `type=registry` 缓存后端时出现镜像仓库认证问题。
 
-_Solution:_ Ensure the login action runs before the build action.
+_解决方案：_ 确保登录操作在构建操作之前运行。
 
-### 18.3 Cosign/Signing Issues
+### 18.3 Cosign/签名问题
 
 **"error: signing [IMAGE] at least one identity must be provided"**
 
-_Cause:_ The OIDC token was not available to Cosign.
+_原因：_ Cosign 无法获取 OIDC 令牌。
 
-_Solution:_
-- Verify `permissions:` includes `id-token: write`
-- Check that Cosign is v2.0+ (keyless signing was GA in v2.0)
-- Verify the `COSIGN_EXPERIMENTAL` environment variable is not set to `true`
-  (it's required for v1.x but interferes with v2.x keyless signing)
+_解决方案：_
+- 验证 `permissions:` 包含 `id-token: write`
+- 检查 Cosign 是否为 v2.0+（无密钥签名在 v2.0 中正式发布）
+- 验证 `COSIGN_EXPERIMENTAL` 环境变量未设置为 `true`
+  （该变量对于 v1.x 是必需的，但会干扰 v2.x 的无密钥签名）
 
 **"error: verifying image: no matching signatures"**
 
-_Cause:_ The image was pushed but not signed, or the signature is in a different
-registry.
+_原因：_ 镜像已推送但未签名，或签名位于不同的镜像仓库中。
 
-_Solution:_
-- Confirm that `cosign sign` completed successfully
-- Check the image repository for signature manifests (they appear as separate
-  manifests in the registry UI)
-- Verify you're using the correct digest
+_解决方案：_
+- 确认 `cosign sign` 已完成成功
+- 检查镜像仓库中的签名清单（它们在镜像仓库 UI 中显示为单独的清单）
+- 验证你正在使用正确的摘要
 
-### 18.4 Trivy Issues
+### 18.4 Trivy 问题
 
 **"Trivy scan failed with exit code 1"**
 
-_Cause:_ Vulnerabilities were found at the configured severity threshold.
+_原因：_ 在配置的严重阈值发现了漏洞。
 
-This is EXPECTED behavior when `exit-code: 1` is set. The scan worked correctly —
-it found issues. Check the SARIF output and CI logs for details.
+当设置了 `exit-code: 1` 时，这是预期行为。扫描正常工作 — 它发现了问题。检查 SARIF 输出和 CI 日志以获取详细信息。
 
-To determine if it's a tool error vs. vulnerability finding:
-- Check the step output for "CRITICAL" or "HIGH" severity listings
-- If the output shows vulnerabilities, these are actionable items to fix
-- If the output shows an error like "unable to initialize database," it's a tool issue
+判断是工具错误还是漏洞发现：
+- 检查步骤输出中是否有"CRITICAL"或"HIGH"严重级别列表
+- 如果输出显示漏洞，这些是可操作修复项
+- 如果输出显示诸如"unable to initialize database"之类的错误，则属于工具问题
 
 **"Trivy failed to download vulnerability database"**
 
-_Cause:_ Network connectivity issue or Docker Hub rate limiting.
+_原因：_ 网络连接问题或 Docker Hub 速率限制。
 
-_Solution:_
-- GitHub Actions runners have network access by default
-- For rate limiting, Trivy automatically retries with backoff
-- In air-gapped environments, configure a local Trivy mirror
+_解决方案：_
+- GitHub Actions 运行器默认有网络访问权限
+- 对于速率限制，Trivy 会自动重试并回退
+- 在离线环境中，配置本地 Trivy 镜像
 
-### 18.5 Release Failures
+### 18.5 Release 失败
 
-**"Resource not accessible by integration" — release creation fails**
+**"Resource not accessible by integration" — release 创建失败**
 
-_Cause:_ The GITHUB_TOKEN does not have `contents: write` permission.
+_原因：_ GITHUB_TOKEN 没有 `contents: write` 权限。
 
-_Solution:_ Verify the workflow `permissions:` block includes `contents: write`.
+_解决方案：_ 验证工作流 `permissions:` 块包含 `contents: write`。
 
-**"Validation Error: Tag already exists" — tag_name conflict**
+**"Validation Error: Tag already exists" — tag_name 冲突**
 
-_Cause:_ A release with the same tag already exists.
+_原因：_ 具有相同标签的 release 已经存在。
 
-_Solution:_
-- Use unique tags for each build (semver or timestamp-based)
-- The `workflow_dispatch` flow creates tags from the version, which should be unique
-- For the `release` event trigger, the tag already exists (GitHub created it)
+_解决方案：_
+- 为每次构建使用唯一标签（基于 semver 或时间戳）
+- `workflow_dispatch` 流程从版本号创建标签，这应该是唯一的
+- 对于 `release` 事件触发器，标签已存在（GitHub 创建了它）
 
-### 18.6 Cleanup Issues
+### 18.6 清理问题
 
-**"delete failed: resource not accessible" — cleanup action fails**
+**"delete failed: resource not accessible" — cleanup 操作失败**
 
-_Cause:_ The GITHUB_TOKEN needs package deletion permissions which may not be granted
-by default.
+_原因：_ GITHUB_TOKEN 需要默认可能未授予的包删除权限。
 
-_Solution:_
-- The `packages: write` permission is needed but may not be sufficient
-- For GHCR package deletion, you may need a Personal Access Token with `delete:packages`
-  scope
-- Configure the PAT as a repository secret and pass it as the `token` input
+_解决方案：_
+- 需要 `packages: write` 权限，但可能不够
+- 对于 GHCR 包删除，可能需要具有 `delete:packages` 范围的 Personal Access Token（个人访问令牌）
+- 将 PAT 配置为仓库密钥，并将其作为 `token` 输入传递
 
 ---
 
-## 19. Cost and Resource Optimization
+## 19. 成本与资源优化
 
-### 19.1 Runner Time Analysis
+### 19.1 运行器时间分析
 
-Estimated runtime for each job in this workflow:
+此工作流中每个作业的预估运行时间：
 
-| Job | Est. Time | Parallel With | Cost Notes |
+| 作业 | 预估时间 | 并行对象 | 成本说明 |
 |---|---|---|---|
-| docker-setup | ~30s | — | Baseline setup |
-| docker-lint | ~20s | metadata | Fast, lightweight |
-| metadata | ~15s | docker-lint | Fast, lightweight |
-| build-push | ~3-8min | — | Most expensive (multi-arch build) |
-| image-scan | ~2-3min | sbom-attest | First run downloads DB |
-| sbom-attest | ~2-3min | image-scan | SBOM gen + Cosign |
-| verify-image | ~1min | — | Pull + verify |
-| release | ~30s | — | API call |
-| cleanup | ~15s | — | API call |
+| docker-setup | ~30秒 | — | 基础设置 |
+| docker-lint | ~20秒 | metadata | 快速、轻量 |
+| metadata | ~15秒 | docker-lint | 快速、轻量 |
+| build-push | ~3-8分钟 | — | 最昂贵（多架构构建） |
+| image-scan | ~2-3分钟 | sbom-attest | 首次运行下载数据库 |
+| sbom-attest | ~2-3分钟 | image-scan | SBOM 生成 + Cosign |
+| verify-image | ~1分钟 | — | 拉取 + 验证 |
+| release | ~30秒 | — | API 调用 |
+| cleanup | ~15秒 | — | API 调用 |
 
-**Total wall-clock time:** ~8-15 minutes (depending on build complexity and cache hits)
+**总墙钟时间：** ~8-15 分钟（取决于构建复杂度和缓存命中率）
 
-**Total runner minutes:** ~10-18 minutes (due to parallel execution)
+**总运行器分钟数：** ~10-18 分钟（由于并行执行）
 
-### 19.2 Cache Cost Savings
+### 19.2 缓存成本节省
 
-Without caching (`--no-cache`), a typical multi-arch build takes 8-15 minutes.
-With GHA cache and a 50%+ hit rate, build time drops to 2-5 minutes.
+没有缓存（`--no-cache`）时，典型的多架构构建需要 8-15 分钟。使用 GHA 缓存且命中率超过 50% 时，构建时间降至 2-5 分钟。
 
-**Cost calculation (GitHub-hosted runners):**
-- Linux runner: $0.008/min
-- Without cache: 12 min avg → $0.096/run
-- With cache: 4 min avg → $0.032/run
-- Savings: ~67% per run
-- At 50 runs/day: ~$3.20/day savings
+**成本计算（GitHub 托管运行器）：**
+- Linux 运行器：$0.008/分钟
+- 无缓存：平均 12 分钟 → $0.096/次运行
+- 有缓存：平均 4 分钟 → $0.032/次运行
+- 节省：每次运行约 67%
+- 每天 50 次运行：每天约节省 $3.20
 
-### 19.3 Storage Management
+### 19.3 存储管理
 
-GHCR storage limits:
-- Free tier: 500 MB for private repos, unlimited for public
-- Paid plan: Included in minutes
-- Cleanup (job 9) is essential for staying within limits on private repos
+GHCR 存储限制：
+- 免费套餐：私有仓库 500 MB，公共仓库无限制
+- 付费套餐：包含在分钟数中
+- 清理（作业 9）对于保持在私有仓库限制内至关重要
 
-Strategies for managing GHCR storage:
-1. Delete untagged versions (this workflow)
-2. Set a package-level retention policy (GitHub UI > Packages > Settings)
-3. Use OCI index with shared layers (multi-arch images share base layers)
-4. Keep only the last N tagged versions
+管理 GHCR 存储的策略：
+1. 删除未标记的版本（本工作流）
+2. 设置包级别保留策略（GitHub UI > Packages > Settings）
+3. 使用具有共享层的 OCI 索引（多架构镜像共享基础层）
+4. 仅保留最后 N 个有标签的版本
 
 ---
 
-## 20. Extending This Workflow
+## 20. 扩展本工作流
 
-### 20.1 Adding More Platforms
+### 20.1 添加更多平台
 
-To add ARM v7 (32-bit, for Raspberry Pi) to the build matrix:
+要将 ARM v7（32 位，适用于树莓派）添加到构建矩阵中：
 
-1. Update the `platforms` input default:
+1. 更新 `platforms` 输入默认值：
 ```yaml
 platforms:
   default: 'linux/amd64,linux/arm64,linux/arm/v7'
 ```
 
-2. Verify the QEMU setup includes arm emulation:
+2. 验证 QEMU 设置包含 arm 仿真：
 ```yaml
 - name: Set up QEMU
   uses: docker/setup-qemu-action@v3
@@ -2729,14 +2437,14 @@ platforms:
     platforms: arm64,arm
 ```
 
-3. Verify the base image supports arm/v7:
+3. 验证基础镜像支持 arm/v7：
 ```bash
 docker buildx imagetools inspect node:22-slim | grep arm
 ```
 
-### 20.2 Adding Image Promotion
+### 20.2 添加镜像升级
 
-To add an image promotion job (e.g., promote `edge` → `stable`):
+要添加镜像升级作业（例如，将 `edge` 升级为 `stable`）：
 
 ```yaml
 promote:
@@ -2757,9 +2465,9 @@ promote:
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
 ```
 
-### 20.3 Adding Deployment
+### 20.3 添加部署
 
-To deploy the verified image to a Kubernetes cluster:
+要将已验证的镜像部署到 Kubernetes 集群：
 
 ```yaml
 deploy:
@@ -2777,9 +2485,9 @@ deploy:
           --record
 ```
 
-### 20.4 Adding Notification
+### 20.4 添加通知
 
-To send a Slack/DingTalk/Feishu notification:
+要发送 Slack/钉钉/飞书通知：
 
 ```yaml
 notify:
@@ -2799,7 +2507,7 @@ notify:
 
 ---
 
-## 21. Workflow DAG Reference
+## 21. 工作流 DAG 参考
 
 ### Complete Job Dependency Graph
 
@@ -2843,25 +2551,25 @@ notify:
                    └──────────────┘                    │
 ```
 
-### Condition Matrix
+### 条件矩阵
 
-| Job | main branch | dev branch | Feature branch | Release event |
+| 作业 | main 分支 | dev 分支 | 功能分支 | Release 事件 |
 |---|---|---|---|---|
-| docker-setup | YES | YES | YES | YES |
-| docker-lint | YES | YES | YES | YES |
-| metadata | YES | YES | YES | YES |
-| build-push | YES | YES | YES | YES |
-| image-scan | YES (skip-scan?) | YES (skip-scan?) | YES (skip-scan?) | YES (skip-scan?) |
-| sbom-attest | YES | YES | YES | YES |
-| verify-image | YES | YES | YES | YES |
-| release | YES | NO | NO | YES (attach) |
-| cleanup | YES | NO | NO | NO |
+| docker-setup | 是 | 是 | 是 | 是 |
+| docker-lint | 是 | 是 | 是 | 是 |
+| metadata | 是 | 是 | 是 | 是 |
+| build-push | 是 | 是 | 是 | 是 |
+| image-scan | 是（skip-scan?） | 是（skip-scan?） | 是（skip-scan?） | 是（skip-scan?） |
+| sbom-attest | 是 | 是 | 是 | 是 |
+| verify-image | 是 | 是 | 是 | 是 |
+| release | 是 | 否 | 否 | 是（附加） |
+| cleanup | 是 | 否 | 否 | 否 |
 
 ---
 
-## 22. Script and Command Reference
+## 22. 脚本与命令参考
 
-### Useful Docker Commands
+### 有用的 Docker 命令
 
 ```bash
 # List multi-arch platforms for an image
@@ -2891,7 +2599,7 @@ rekor-cli search --artifact sha256:digest
 gh api --method DELETE "/orgs/owner/packages/container/repo-name/versions/version-id"
 ```
 
-### Useful `gh` CLI Commands
+### 有用的 `gh` CLI 命令
 
 ```bash
 # Trigger workflow manually
@@ -2914,18 +2622,18 @@ gh api /orgs/owner/packages/container/repo-name/versions --jq '.[].metadata.cont
 
 ---
 
-## End of Document
+## 文档结束
 
 ---
 
-## 23. YAML Syntax Deep Dive
+## 23. YAML 语法深入解析
 
-### 23.1 YAML Anchors and Aliases (for DRY workflows)
+### 23.1 YAML 锚点与别名（用于 DRY 工作流）
 
-GitHub Actions supports YAML anchors (`&`) and aliases (`*`) to reduce repetition:
+GitHub Actions 支持 YAML 锚点（`&`）和别名（`*`）来减少重复：
 
 ```yaml
-# Define reusable blocks
+# 定义可复用的代码块
 .base-setup: &base-setup
   - uses: actions/checkout@v4
   - uses: docker/login-action@v3
@@ -2937,23 +2645,20 @@ GitHub Actions supports YAML anchors (`&`) and aliases (`*`) to reduce repetitio
 jobs:
   job-a:
     steps:
-      - *base-setup                  # Reuse the anchor
+      - *base-setup                  # 复用锚点
       - run: echo "doing something"
 
   job-b:
     steps:
-      - *base-setup                  # Reuse again
+      - *base-setup                  # 再次复用
       - run: echo "doing something else"
 ```
 
-While this workflow doesn't use anchors (they can be confusing in debugging), they are
-a useful technique for reducing boilerplate in large workflows with many jobs.
+虽然本工作流未使用锚点（它们在调试时可能引起混淆），但这是减少包含许多作业的大型工作流中样板代码的有用技术。
 
-### 23.2 Matrix Strategies
+### 23.2 矩阵策略
 
-The matrix strategy creates multiple job variants from a single job definition. While
-this workflow uses a single-platform strategy (no matrix), here's how a matrix would
-look for multi-platform builds:
+矩阵策略从单个作业定义创建多个作业变体。虽然本工作流使用单平台策略（无矩阵），但以下是矩阵构建多平台的方式：
 
 ```yaml
 build-matrix:
@@ -2963,9 +2668,9 @@ build-matrix:
         - linux/amd64
         - linux/arm64
         - linux/arm/v7
-    # Don't cancel all runners when one fails
+    # 当其中一个失败时不取消所有运行器
     fail-fast: false
-    # Use the max parallel limit
+    # 使用最大并行限制
     max-parallel: 3
   steps:
     - uses: docker/build-push-action@v6
@@ -2974,15 +2679,15 @@ build-matrix:
         tags: ghcr.io/owner/repo:${{ matrix.platform }}
 ```
 
-However, using a single build-push with multiple `platforms:` is preferred because:
-- BuildKit builds all platforms in parallel internally
-- A single multi-arch manifest list is created
-- The push creates one OCI index referencing all platforms
-- Matrix builds create separate image tags per platform, not a manifest list
+然而，使用单个带有多个 `platforms:` 的 build-push 更可取，因为：
+- BuildKit 内部并行构建所有平台
+- 创建单个多架构清单列表
+- 推送创建一个引用所有平台的 OCI 索引
+- 矩阵构建为每个平台创建单独的镜像标签，而非清单列表
 
-### 23.3 Concurrency Groups
+### 23.3 并发组
 
-For production use, add a `concurrency` block to prevent redundant runs:
+对于生产环境使用，添加 `concurrency` 块以防止冗余运行：
 
 ```yaml
 concurrency:
@@ -2990,26 +2695,22 @@ concurrency:
   cancel-in-progress: true
 ```
 
-This cancels in-progress runs when a new commit is pushed to the same branch, saving
-CI minutes. Without this, every commit triggers a new run while the previous one
-completes — wasting resources on outdated builds.
+这会在新提交推送到同一分支时取消正在进行的运行，从而节省 CI 分钟数。没有这个设置，每次提交都会触发新的运行，同时前一次运行继续完成 — 在过时的构建上浪费资源。
 
-### 23.4 Timeouts
+### 23.4 超时
 
-Set job-level timeouts to prevent runaway builds:
+设置作业级超时以防止失控的构建：
 
 ```yaml
 build-push:
   timeout-minutes: 30
 ```
 
-Default timeout is 360 minutes (6 hours) for GitHub-hosted runners. For CI efficiency,
-set timeouts that reflect realistic expectations. A multi-arch Docker build rarely needs
-more than 15-20 minutes with caching.
+GitHub 托管运行器的默认超时为 360 分钟（6 小时）。为了提高 CI 效率，设置反映实际预期的超时时间。启用缓存的多架构 Docker 构建很少需要超过 15-20 分钟。
 
-### 23.5 Environment URLs
+### 23.5 环境 URL
 
-Link the workflow run UI to the deployed release:
+将工作流运行 UI 链接到已部署的 release：
 
 ```yaml
 release:
@@ -3022,52 +2723,52 @@ release:
         echo "deploy_url=https://github.com/${{ github.repository }}/releases/tag/v${{ needs.metadata.outputs.version }}" >> "$GITHUB_ENV"
 ```
 
-The deploy URL appears in the workflow run summary as a clickable link.
+部署 URL 作为可点击链接出现在工作流运行摘要中。
 
 ---
 
-## 24. Workflow Outputs Summary
+## 24. 工作流输出摘要
 
-### Job Outputs Table
+### 作业输出表
 
-| Job | Output | Type | Description | Consumed By |
+| 作业 | 输出 | 类型 | 描述 | 被谁消费 |
 |---|---|---|---|---|
-| docker-setup | builder-name | string | Buildx builder instance name | Diagnostic only |
-| metadata | tags | string (comma-sep) | Docker image tags | build-push |
-| metadata | labels | string (comma-sep) | OCI image labels | build-push |
-| metadata | json | string (JSON) | Full metadata JSON | Any |
-| metadata | version | string | Detected version | build-push, release |
-| build-push | digest | string (sha256:) | Image manifest digest | image-scan, sbom-attest, verify-image, release |
-| build-push | tags | string | Built tags | release |
-| build-push | image-with-digest | string | Full immutable reference | Diagnostic |
+| docker-setup | builder-name | string | Buildx 构建器实例名称 | 仅诊断 |
+| metadata | tags | string（逗号分隔） | Docker 镜像标签 | build-push |
+| metadata | labels | string（逗号分隔） | OCI 镜像标记 | build-push |
+| metadata | json | string (JSON) | 完整元数据 JSON | 任意 |
+| metadata | version | string | 检测到的版本号 | build-push, release |
+| build-push | digest | string (sha256:) | 镜像清单摘要 | image-scan, sbom-attest, verify-image, release |
+| build-push | tags | string | 构建的标签 | release |
+| build-push | image-with-digest | string | 完整不可变引用 | 仅诊断 |
 
 ---
 
-## 25. Environment Variables Reference
+## 25. 环境变量参考
 
-### Workflow-Level Variables
+### 工作流级变量
 
-| Variable | Value | Description | Used In |
+| 变量 | 值 | 描述 | 用于 |
 |---|---|---|---|
-| `REGISTRY` | `ghcr.io` | Container registry hostname | login, build, push, verify |
-| `IMAGE_NAME` | `${{ github.repository }}` | Image name (owner/repo) | All image references |
-| `TRIVY_SEVERITY` | `CRITICAL,HIGH` | Vulnerability severity threshold | image-scan |
+| `REGISTRY` | `ghcr.io` | 容器镜像仓库主机名 | login, build, push, verify |
+| `IMAGE_NAME` | `${{ github.repository }}` | 镜像名称（owner/repo） | 所有镜像引用 |
+| `TRIVY_SEVERITY` | `CRITICAL,HIGH` | 漏洞严重级别阈值 | image-scan |
 
-### Secrets Used
+### 使用的密钥
 
-| Secret | Source | Description | Used In |
+| 密钥 | 来源 | 描述 | 用于 |
 |---|---|---|---|
-| `GITHUB_TOKEN` | Auto-generated | Repository-scoped token | login, release, cleanup, attest |
+| `GITHUB_TOKEN` | 自动生成 | 仓库范围的令牌 | login, release, cleanup, attest |
 
 ---
 
-## Quick Reference: Files Created
+## 快速参考：创建的文件
 
-| File | Lines | Purpose |
+| 文件 | 行数 | 用途 |
 |---|---|---|
-| `.github/workflows/docker-full-lifecycle.yml` | ~550 | The workflow definition with 9 jobs |
-| `.github/workflow-lab/docs/workflow-2-docker-lifecycle.md` | ~3000+ | This comprehensive documentation |
+| `.github/workflows/docker-full-lifecycle.yml` | ~550 | 包含 9 个作业的工作流定义 |
+| `.github/workflow-lab/docs/workflow-2-docker-lifecycle.md` | ~3000+ | 本文档 |
 
 ---
 
-## End of Document
+## 文档结束
