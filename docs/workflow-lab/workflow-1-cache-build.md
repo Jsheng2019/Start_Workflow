@@ -1,92 +1,92 @@
-# Workflow 1: Advanced Cache & Build Acceleration — Complete Guide
+# 工作流 1：高级缓存与构建加速 — 完整指南
 
-> **Audience:** Developers new to GitHub Actions who want to understand production-grade caching, matrix builds, and CI/CD acceleration.
+> **受众：** 刚接触 GitHub Actions 的开发者，希望了解生产级缓存、矩阵构建和 CI/CD 加速。
 >
-> **File:** `.github/workflows/advanced-cache-build.yml`
+> **文件：** `.github/workflows/advanced-cache-build.yml`
 >
-> **Concepts covered:** Triggers, permissions, concurrency, `hashFiles()`, `matrix` strategy, `actions/cache` (save/restore), artifacts, Docker layer caching, conditional execution, expression syntax, and context objects.
+> **涉及的概念：** 触发器、权限、并发、`hashFiles()`、`matrix` 策略、`actions/cache`（保存/恢复）、构件、Docker 层缓存、条件执行、表达式语法和上下文对象。
 
 ---
 
-## Table of Contents
+## 目录
 
-1. [File Overview and Top-Level Structure](#1-file-overview-and-top-level-structure)
-2. [Trigger Syntax (on:)](#2-trigger-syntax-on)
-3. [Permissions Block](#3-permissions-block)
-4. [Concurrency Groups](#4-concurrency-groups)
-5. [Environment Defaults (env:)](#5-environment-defaults-env)
-6. [Job 1: cache-calc — Centralized Cache Key Computation](#6-job-1-cache-calc)
-7. [Job 2: deps-install — Matrix Dependency Installation with Caching](#7-job-2-deps-install)
-8. [Job 3: lint — Fast-Feedback Code Quality](#8-job-3-lint)
-9. [Job 4: docker-prepare — Docker Layer Cache Pre-build](#9-job-4-docker-prepare)
-10. [Job 5: build — Matrix Build with Output Artifacts](#10-job-5-build)
-11. [Job 6: test-unit — Matrix Test Sharding](#11-job-6-test-unit)
-12. [Job 7: test-integration — Docker Compose Integration Tests](#12-job-7-test-integration)
-13. [Job 8: cache-warm — Main Branch Cache Priming](#13-job-8-cache-warm)
-14. [Expression Syntax and Context Objects](#14-expression-syntax-and-context-objects)
-15. [Key Patterns Summary](#15-key-patterns-summary)
+1. [文件概览和顶层结构](#1-文件概览和顶层结构)
+2. [触发器语法 (on:)](#2-触发器语法-on)
+3. [权限块](#3-权限块)
+4. [并发组](#4-并发组)
+5. [环境默认值 (env:)](#5-环境默认值-env)
+6. [任务 1：cache-calc — 集中式缓存键计算](#6-任务-1-cache-calc)
+7. [任务 2：deps-install — 带缓存的矩阵依赖安装](#7-任务-2-deps-install)
+8. [任务 3：lint — 快速反馈代码质量检查](#8-任务-3-lint)
+9. [任务 4：docker-prepare — Docker 层缓存预构建](#9-任务-4-docker-prepare)
+10. [任务 5：build — 带输出构件的矩阵构建](#10-任务-5-build)
+11. [任务 6：test-unit — 矩阵测试分片](#11-任务-6-test-unit)
+12. [任务 7：test-integration — Docker Compose 集成测试](#12-任务-7-test-integration)
+13. [任务 8：cache-warm — 主分支缓存预热](#13-任务-8-cache-warm)
+14. [表达式语法和上下文对象](#14-表达式语法和上下文对象)
+15. [关键模式总结](#15-关键模式总结)
 
 ---
 
-## 1. File Overview and Top-Level Structure
+## 1. 文件概览和顶层结构
 
 ### YAML
 
 ```yaml
 # =============================================================================
-# Advanced Cache & Build Acceleration
+# 高级缓存与构建加速
 # =============================================================================
-# A production-grade GitHub Actions workflow demonstrating multi-layer caching,
-# matrix builds, artifact pass-through, Docker layer caching, and cache warming.
+# 一个生产级 GitHub Actions 工作流，演示多层缓存、
+# 矩阵构建、构件传递、Docker 层缓存和缓存预热。
 #
-# Key concepts demonstrated:
-#   - Centralized cache key computation (cache-calc job)
-#   - Matrix strategies for Node versions, OS variants, and test sharding
-#   - Explicit cache restore/save vs. automatic post-action caching
-#   - Artifact upload/download for pass-through between jobs
-#   - Docker layer caching with BuildKit cache backend
-#   - concurrency groups to cancel redundant runs
-#   - Conditional execution (main-branch-only cache warming)
+# 演示的关键概念：
+#   - 集中式缓存键计算（cache-calc 任务）
+#   - Node 版本、操作系统变体和测试分片的矩阵策略
+#   - 显式缓存恢复/保存与自动后操作缓存
+#   - 用于任务间传递的构件上传/下载
+#   - 使用 BuildKit 缓存后端的 Docker 层缓存
+#   - 用于取消冗余运行的并发组
+#   - 条件执行（仅主分支的缓存预热）
 # =============================================================================
 
 name: Advanced Cache & Build Acceleration
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Lines | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |-------|---------|-------------|
-| 1-14 | `#` comments | YAML comments. Everything after `#` to end of line is ignored. These are block-level documentation comments explaining the file's purpose. |
-| 16 | `name:` | The workflow name appears in the GitHub Actions UI (top-left of each workflow run). Choose a descriptive name since multiple workflows may exist. |
+| 1-14 | `#` 注释 | YAML 注释。`#` 之后到行尾的内容均被忽略。这些是块级文档注释，解释文件的用途。 |
+| 16 | `name:` | 工作流名称，显示在 GitHub Actions UI 中（每个工作流运行的左上角）。由于可能存在多个工作流，请选择描述性的名称。 |
 
-### Action Capability: Commenting in YAML
+### 动作能力：YAML 中的注释
 
-YAML supports single-line comments with `#`. There is no multi-line comment syntax in standard YAML. Use `#` at the start of each comment line. Inline comments are also valid:
+YAML 支持使用 `#` 进行单行注释。标准 YAML 中没有多行注释语法。请在每行注释开头使用 `#`。行内注释也有效：
 
 ```yaml
-name: Build  # inline comment
+name: Build  # 行内注释
 ```
 
-### Why This Approach
+### 为什么采用这种方式
 
-Block comments at the top of the file serve as:
-- **Quick reference** for developers reading the file
-- **Design documentation** that travels with the code
-- **Onboarding aid** for new team members learning GitHub Actions patterns
+文件顶部的块注释充当：
+- **快速参考**，供阅读文件的开发者使用
+- **设计文档**，随代码一起传递
+- **入门辅助**，帮助新团队成员学习 GitHub Actions 模式
 
 ---
 
-## 2. Trigger Syntax (on:)
+## 2. 触发器语法 (on:)
 
 ### YAML
 
 ```yaml
 # ---------------------------------------------------------------------------
-# Triggers
+# 触发器
 # ---------------------------------------------------------------------------
-# push:       CI on every commit to main or dev branches
-# pull_request: CI when a PR targets dev (catches issues before merge)
-# workflow_dispatch: manual trigger via GitHub UI or API for testing
+# push:       每次提交到 main 或 dev 分支时执行 CI
+# pull_request: 当 PR 目标为 dev 时执行 CI（在合并前发现问题）
+# workflow_dispatch: 通过 GitHub UI 或 API 手动触发，用于测试
 # ---------------------------------------------------------------------------
 on:
   push:
@@ -96,58 +96,58 @@ on:
   workflow_dispatch:
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1 | `on:` | The `on` (or `trigger`) keyword defines which events cause this workflow to run. It's the entry point for workflow execution. |
-| 2 | `push:` | Run the workflow on `git push` events. |
-| 3 | `branches: [main, dev]` | Only trigger for pushes to `main` or `dev` branches. The YAML array syntax `[main, dev]` is equivalent to the block form: `branches:\n  - main\n  - dev`. |
-| 4 | `pull_request:` | Run the workflow on pull request events (opened, synchronize, reopened by default). |
-| 5 | `branches: [dev]` | Only trigger PR events when the PR targets the `dev` branch. PRs targeting `main` directly won't trigger this workflow. |
-| 6 | `workflow_dispatch:` | Allows manual triggering from the GitHub Actions UI, the `gh workflow run` CLI command, or the REST API. No additional configuration needed. |
+| 1 | `on:` | `on`（或 `trigger`）关键字定义哪些事件会导致此工作流运行。它是工作流执行的入口点。 |
+| 2 | `push:` | 在 `git push` 事件时运行工作流。 |
+| 3 | `branches: [main, dev]` | 仅当推送到 `main` 或 `dev` 分支时触发。YAML 数组语法 `[main, dev]` 等价于块形式：`branches:\n  - main\n  - dev`。 |
+| 4 | `pull_request:` | 在拉取请求事件时运行工作流（默认为 opened、synchronize、reopened）。 |
+| 5 | `branches: [dev]` | 仅当 PR 的目标分支是 `dev` 时触发 PR 事件。直接针对 `main` 的 PR 不会触发此工作流。 |
+| 6 | `workflow_dispatch:` | 允许从 GitHub Actions UI、`gh workflow run` CLI 命令或 REST API 手动触发。无需额外配置。 |
 
-### Action Capability: Event Triggers
+### 动作能力：事件触发器
 
-GitHub Actions supports many event types. The most common:
+GitHub Actions 支持许多事件类型。最常见的：
 
-| Event | When It Fires | Common Use |
+| 事件 | 触发时机 | 常见用途 |
 |-------|---------------|------------|
-| `push` | A commit is pushed | CI for every commit |
-| `pull_request` | PR is opened/updated | Pre-merge validation |
-| `workflow_dispatch` | Manual trigger | Ad-hoc runs, debugging |
-| `schedule` | Cron schedule | Nightly builds, maintenance |
-| `release` | Release published | Deploy workflows |
-| `issue_comment` | Comment on issue/PR | Chatops, /trigger commands |
+| `push` | 提交被推送时 | 每次提交执行 CI |
+| `pull_request` | PR 被打开/更新时 | 合并前验证 |
+| `workflow_dispatch` | 手动触发 | 临时运行、调试 |
+| `schedule` | Cron 计划 | 夜间构建、维护 |
+| `release` | 发布发布时 | 部署工作流 |
+| `issue_comment` | 在 Issue/PR 上评论时 | Chatops、/trigger 命令 |
 
-**Branch filtering** (`branches:`) can be literal names or glob patterns:
-- `main` — exact match
-- `dev` — exact match
-- `release/**` — any branch starting with `release/`
-- `!alpha` — exclude `alpha`
+**分支过滤**（`branches:`）可以是字面名称或 glob 模式：
+- `main` — 精确匹配
+- `dev` — 精确匹配
+- `release/**` — 任何以 `release/` 开头的分支
+- `!alpha` — 排除 `alpha`
 
-**Important:** `push` branches filter WHICH branches trigger on push. `pull_request` branches filter which TARGET branches trigger the PR check. They serve different purposes.
+**重要说明：** `push` 的分支过滤指定哪些分支的推送会触发构建。`pull_request` 的分支过滤指定哪些目标分支的 PR 会触发检查。两者的用途不同。
 
-### Why This Approach
+### 为什么采用这种方式
 
-- **`push` on main + dev:** Every commit gets tested immediately. No one pushes broken code without knowing.
-- **`pull_request` on dev:** PRs targeting dev are validated before merge. This catches issues in review before they reach main.
-- **`workflow_dispatch`:** Essential for testing workflow changes. Without this, you'd need to push a commit every time you want to test a modification.
-- **Omitting PR on main:** Changes reach main only through PRs merged from dev, so the dev PR check covers it.
+- **`push` 在 main + dev 上：** 每次提交立即得到测试。没有人能在不知情的情况下推送损坏的代码。
+- **`pull_request` 在 dev 上：** 针对 dev 的 PR 在合并前经过验证。这在审查阶段捕获问题，防止它们进入 main。
+- **`workflow_dispatch`：** 测试工作流变更的必备工具。没有它，每次想测试修改时都需要推送提交。
+- **省略 PR 在 main 上：** 变更仅通过从 dev 合并的 PR 进入 main，因此 dev 的 PR 检查覆盖了这一点。
 
 ---
 
-## 3. Permissions Block
+## 3. 权限块
 
 ### YAML
 
 ```yaml
 # ---------------------------------------------------------------------------
-# Permissions
+# 权限
 # ---------------------------------------------------------------------------
-# contents: read     — needed for checkout
-# checks: write      — allows dorny/test-reporter to create check runs
-# pull-requests: write — allows test-reporter to write PR comments
+# contents: read     — 检出代码所需
+# checks: write      — 允许 dorny/test-reporter 创建检查运行
+# pull-requests: write — 允许 test-reporter 编写 PR 评论
 # ---------------------------------------------------------------------------
 permissions:
   contents: read
@@ -155,184 +155,184 @@ permissions:
   pull-requests: write
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1 | `permissions:` | Defines the GITHUB_TOKEN permissions for this workflow. GitHub Actions auto-generates a token scoped to the repository. |
-| 2 | `contents: read` | Read access to repository contents. Required for `actions/checkout`. Without this, checkout fails. |
-| 3 | `checks: write` | Write access to check runs API. Used by `dorny/test-reporter` to create check run entries visible in the GitHub UI. |
-| 4 | `pull-requests: write` | Write access to pull requests. Used by `dorny/test-reporter` to comment on PRs with test results. |
+| 1 | `permissions:` | 定义此工作流的 GITHUB_TOKEN 权限。GitHub Actions 自动生成一个作用于仓库的令牌。 |
+| 2 | `contents: read` | 对仓库内容的读取权限。`actions/checkout` 需要此权限。没有它将无法检出。 |
+| 3 | `checks: write` | 对检查运行 API 的写入权限。`dorny/test-reporter` 使用它在 GitHub UI 中创建检查运行条目。 |
+| 4 | `pull-requests: write` | 对拉取请求的写入权限。`dorny/test-reporter` 使用它在 PR 上发表带有测试结果的评论。 |
 
-### Action Capability: GITHUB_TOKEN and Permissions
+### 动作能力：GITHUB_TOKEN 和权限
 
-Every workflow run gets a `secrets.GITHUB_TOKEN` with configurable scope. The fine-grained permissions model (GA in late 2023) replaced the earlier broad `write-all` default.
+每次工作流运行都会获得一个 `secrets.GITHUB_TOKEN`，其作用域可配置。细粒度权限模型（2023 年底 GA）取代了之前宽泛的 `write-all` 默认值。
 
-**Available permissions:**
+**可用的权限：**
 
-| Permission | What it grants |
+| 权限 | 授权内容 |
 |------------|---------------|
-| `actions` | Read/write actions (artifacts, cache, workflow runs) |
-| `checks` | Read/write check runs and suites |
-| `contents` | Read/write repository contents (commits, releases, tags) |
-| `deployments` | Read/write deployments |
-| `id-token` | Read/write OIDC token (for cloud provider auth) |
-| `issues` | Read/write issues |
-| `pull-requests` | Read/write pull requests |
-| `packages` | Read/write GitHub Packages |
+| `actions` | 读/写操作（构件、缓存、工作流运行） |
+| `checks` | 读/写检查运行和检查套件 |
+| `contents` | 读/写仓库内容（提交、发布、标签） |
+| `deployments` | 读/写部署 |
+| `id-token` | 读/写 OIDC 令牌（用于云提供商认证） |
+| `issues` | 读/写 Issue |
+| `pull-requests` | 读/写拉取请求 |
+| `packages` | 读/写 GitHub Packages |
 
-**Security best practice:** Grant only the minimum permissions needed. The old default of `write-all` meant any compromised workflow could push code. Explicit `permissions:` blocks are now required for new repositories.
+**安全最佳实践：** 仅授予所需的最低权限。旧的 `write-all` 默认值意味着任何一个工作流被攻破就能推送代码。新仓库现在需要显式的 `permissions:` 块。
 
-### Why This Approach
+### 为什么采用这种方式
 
-- `contents: read` is the minimum for checkout.
-- `checks: write` enables rich test reporting natively in GitHub (no external service needed).
-- `pull-requests: write` allows automated PR comments with test summaries.
-- No additional permissions means no token abuse surface.
+- `contents: read` 是检出所需的最低权限。
+- `checks: write` 支持在 GitHub 本地进行丰富的测试报告（无需外部服务）。
+- `pull-requests: write` 允许自动在 PR 上发布带有测试摘要的评论。
+- 没有额外的权限意味着没有令牌滥用面。
 
 ---
 
-## 4. Concurrency Groups
+## 4. 并发组
 
 ### YAML
 
 ```yaml
 # ---------------------------------------------------------------------------
-# Concurrency
+# 并发
 # ---------------------------------------------------------------------------
-# Groups runs by workflow name + branch ref so that if a new commit is pushed
-# before the previous run finishes, the in-progress run is cancelled.
-# This saves CI minutes on fast-iteration branches.
+# 按工作流名称 + 分支引用来分组运行，这样如果在之前的运行完成之前
+# 推送了新提交，正在进行的运行将被取消。
+# 这在快速迭代的分支上节省了 CI 分钟数。
 # ---------------------------------------------------------------------------
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1 | `concurrency:` | Defines a concurrency group — a logical queue for workflow runs. |
-| 2 | `group:` | The group identifier. Only one run per group executes at a time. |
-| 3 | `${{ github.workflow }}` | Expression: expands to the workflow name ("Advanced Cache & Build Acceleration"). |
-| 4 | `${{ github.ref }}` | Expression: expands to the branch or tag ref (e.g., `refs/heads/dev`). |
-| 5 | `cancel-in-progress: true` | When a new run joins the group, cancel any in-progress run in the same group. |
+| 1 | `concurrency:` | 定义一个并发组 — 工作流运行的逻辑队列。 |
+| 2 | `group:` | 组标识符。每个组同时只有一个运行在执行。 |
+| 3 | `${{ github.workflow }}` | 表达式：展开为工作流名称（"Advanced Cache & Build Acceleration"）。 |
+| 4 | `${{ github.ref }}` | 表达式：展开为分支或标签引用（例如 `refs/heads/dev`）。 |
+| 5 | `cancel-in-progress: true` | 当新运行加入组时，取消同一组中正在进行的运行。 |
 
-### How Concurrency Groups Work
+### 并发组如何工作
 
 ```
-Scenario:
-  Push to dev at t=0  → Run #1 starts
-  Push to dev at t=30 → Run #2 is queued (same group: "Build-refs/heads/dev")
-                        → Run #1 is cancelled via API
-                        → Run #2 starts immediately
+场景：
+  在 t=0 推送到 dev  → 运行 #1 开始
+  在 t=30 推送到 dev → 运行 #2 被排队（同一组："Build-refs/heads/dev"）
+                         → 运行 #1 通过 API 被取消
+                         → 运行 #2 立即开始
 
-Scenario 2 (different branches):
-  Push to dev  → Run #1 starts (group: "Build-refs/heads/dev")
-  Push to main → Run #2 starts (group: "Build-refs/heads/main")
-  Both run in parallel — different group keys.
+场景 2（不同分支）：
+  推送到 dev  → 运行 #1 开始（组："Build-refs/heads/dev"）
+  推送到 main → 运行 #2 开始（组："Build-refs/heads/main"）
+  两者并行运行 — 不同的组键。
 ```
 
-### Expression Syntax: `${{ }}`
+### 表达式语法：`${{ }}`
 
-The `${{ }}` delimiters mark GitHub Actions expressions. Everything inside is evaluated by the Actions expression parser before the step runs. This is distinct from shell variable expansion (`$VAR` or `${VAR}`).
+`${{ }}` 分隔符标记 GitHub Actions 表达式。内部的任何内容都由 Actions 表达式解析器在步骤运行之前计算。这与 shell 变量展开（`$VAR` 或 `${VAR}`）不同。
 
-**Key properties:**
-- Expressions are evaluated server-side, before the runner executes
-- They can appear in ANY field of a workflow (not just `run:`)
-- They have access to context objects: `github`, `env`, `runner`, `matrix`, `needs`, `secrets`, `inputs`, `steps`
+**关键特性：**
+- 表达式在服务端计算，在运行器执行之前
+- 它们可以出现在工作流的任何字段中（不仅仅是 `run:`）
+- 它们可以访问上下文对象：`github`、`env`、`runner`、`matrix`、`needs`、`secrets`、`inputs`、`steps`
 
-### Why This Approach
+### 为什么采用这种方式
 
-- **Cancel-in-progress saves CI minutes.** If you push three commits in quick succession, only the last one runs to completion.
-- **Group key uses `github.ref`** so different branches don't cancel each other. Main and dev run independently.
-- **Without this,** every push enqueues a new run and all of them execute, burning CI minutes on intermediate states that don't matter.
+- **取消进行中节约 CI 分钟数。** 如果你快速连续推送三次提交，只有最后一次会运行完成。
+- **组键使用 `github.ref`**，这样不同分支不会互相取消。main 和 dev 独立运行。
+- **没有这个设置，** 每次推送都会排队一个新的运行，并且所有运行都会执行，在不重要的中间状态上浪费 CI 分钟数。
 
 ---
 
-## 5. Environment Defaults (env:)
+## 5. 环境默认值 (env:)
 
 ### YAML
 
 ```yaml
 # ---------------------------------------------------------------------------
-# Environment defaults
+# 环境默认值
 # ---------------------------------------------------------------------------
 env:
-  NODE_VERSION: 20       # default Node.js version for non-matrix jobs
-  NODE_LTS: 22           # latest LTS for docker-prepare and cache-warm
+  NODE_VERSION: 20       # 非矩阵任务的默认 Node.js 版本
+  NODE_LTS: 22           # docker-prepare 和 cache-warm 使用的最新 LTS
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1 | `env:` | Defines environment variables available to ALL jobs and steps in the workflow. |
-| 2 | `NODE_VERSION: 20` | Custom env var. Accessed via `${{ env.NODE_VERSION }}` in expressions or `$NODE_VERSION` in shell steps. |
-| 3 | `NODE_LTS: 22` | Another custom env var. Note: this is defined but only used as a reference in documentation comments. |
+| 1 | `env:` | 定义工作流中所有任务和步骤都可用的环境变量。 |
+| 2 | `NODE_VERSION: 20` | 自定义环境变量。在表达式中通过 `${{ env.NODE_VERSION }}` 访问，或在 shell 步骤中通过 `$NODE_VERSION` 访问。 |
+| 3 | `NODE_LTS: 22` | 另一个自定义环境变量。注意：此处定义了但仅在文档注释中作为参考使用。 |
 
-### Action Capability: Environment Variable Scopes
+### 动作能力：环境变量作用域
 
-Environment variables in GitHub Actions have three levels:
+GitHub Actions 中的环境变量有三个层级：
 
-| Scope | Defined in | Available to |
+| 作用域 | 定义位置 | 可用范围 |
 |-------|------------|-------------|
-| **Workflow** | `env:` at top level | All jobs and steps |
-| **Job** | `jobs.<job_id>.env:` | All steps in that job |
-| **Step** | `steps[*].env:` or `steps[*].with.env` | Only that specific step |
-| **Runtime** | `echo "NAME=value" >> $GITHUB_ENV` | Subsequent steps in the same job |
+| **工作流级** | 顶层 `env:` | 所有任务和步骤 |
+| **任务级** | `jobs.<job_id>.env:` | 该任务中的所有步骤 |
+| **步骤级** | `steps[*].env:` 或 `steps[*].with.env` | 仅该特定步骤 |
+| **运行时** | `echo "NAME=value" >> $GITHUB_ENV` | 同一任务中的后续步骤 |
 
-Access methods:
-- **Expressions:** `${{ env.NODE_VERSION }}` (evaluated server-side)
-- **Shell:** `$NODE_VERSION` or `${NODE_VERSION}` (evaluated on the runner)
+访问方式：
+- **表达式：** `${{ env.NODE_VERSION }}`（服务端计算）
+- **Shell：** `$NODE_VERSION` 或 `${NODE_VERSION}`（在运行器上计算）
 
-### Why This Approach
+### 为什么采用这种方式
 
-- Single source of truth for the default Node version. Change one line, and all non-matrix jobs pick it up.
-- Using env vars instead of hardcoding numbers makes the workflow more maintainable and self-documenting.
+- 默认 Node 版本的单一事实来源。更改一行，所有非矩阵任务都会生效。
+- 使用环境变量而不是硬编码数字，使工作流更易于维护和自文档化。
 
 ---
 
-## 6. Job 1: cache-calc
+## 6. 任务 1：cache-calc
 
 ### YAML
 
 ```yaml
 # =============================================================================
-# Job 1: cache-calc — Centralized Cache Key Computation
+# 任务 1：cache-calc — 集中式缓存键计算
 # =============================================================================
-# Purpose: Single source of truth for ALL cache keys in the pipeline.
-# Every downstream job reads key prefixes from this job's outputs, ensuring
-# consistent key construction and eliminating key-drift bugs.
+# 目的：管道中所有缓存键的单一事实来源。
+# 每个下游任务从此任务的输出中读取键前缀，确保
+# 一致的键构造并消除键漂移错误。
 #
-# Why a dedicated job:
-#   - Avoids every job running its own hashFiles() with different patterns
-#   - Makes cache invalidation logic auditable in one place
-#   - Outputs are strongly typed (job outputs in needs.<id>.outputs.<name>)
+# 为什么需要专用任务：
+#   - 避免每个任务使用不同的模式运行自己的 hashFiles()
+#   - 使缓存失效逻辑在一个地方可审计
+#   - 输出是强类型的（needs.<id>.outputs.<name> 中的任务输出）
 # =============================================================================
 cache-calc:
   runs-on: ubuntu-latest
-  # These outputs are consumed by downstream jobs via ${{ needs.cache-calc.outputs.* }}
+  # 这些输出被下游任务通过 ${{ needs.cache-calc.outputs.* }} 消费
   outputs:
     dep-key:     ${{ steps.compute.outputs.dep-key }}
     build-key:   ${{ steps.compute.outputs.build-key }}
     docker-key:  ${{ steps.compute.outputs.docker-key }}
     test-key:    ${{ steps.compute.outputs.test-key }}
   steps:
-    # Checkout is required for hashFiles() to operate on the repository content
+    # 检出是必要的，以便 hashFiles() 操作仓库内容
     - uses: actions/checkout@v4
 
-    # Each key uses hashFiles() to fingerprint the relevant inputs:
-    #   - dep-key:      lockfile is the canonical source of dependency truth
-    #   - build-key:    source files + tsconfig + dep-key (chained invalidation)
-    #   - docker-key:   Dockerfile + .dockerignore + dep-key (deps chain)
-    #   - test-key:     test source files
+    # 每个键使用 hashFiles() 对相关输入进行指纹识别：
+    #   - dep-key：      锁定文件是依赖真相的规范来源
+    #   - build-key：    源文件 + tsconfig + dep-key（链式失效）
+    #   - docker-key：   Dockerfile + .dockerignore + dep-key（依赖链）
+    #   - test-key：     测试源文件
     #
-    # Key chaining: build-key includes dep-key via the package-lock.json hash.
-    # When deps change, both dep AND build caches invalidate automatically.
+    # 键链接：build-key 通过 package-lock.json 哈希包含 dep-key。
+    # 当依赖改变时，依赖和构建缓存都会自动失效。
     - id: compute
-      name: Compute all cache keys
+      name: 计算所有缓存键
       run: |
         echo "dep-key=npm-cache-${{ hashFiles('package-lock.json') }}-${{ runner.os }}" >> "$GITHUB_OUTPUT"
         echo "build-key=build-${{ hashFiles('src/**/*.ts', 'tsconfig.json', 'web/tsconfig.json') }}-${{ hashFiles('package-lock.json') }}" >> "$GITHUB_OUTPUT"
@@ -340,41 +340,41 @@ cache-calc:
         echo "test-key=test-${{ hashFiles('src/**/*.test.ts', 'tests/**/*.test.ts') }}" >> "$GITHUB_OUTPUT"
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-#### Job Definition
+#### 任务定义
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1-23 | `#` comments | Documentation header explaining the job's purpose and design rationale. |
-| 24 | `cache-calc:` | The job ID. Must be unique within the workflow. Used as the identifier in `needs:` and `needs.<id>.outputs.*`. |
-| 25 | `runs-on: ubuntu-latest` | Specifies the runner environment. `ubuntu-latest` is the standard Linux runner (currently Ubuntu 22.04 or 24.04). |
-| 26-27 | `#` comment | Reminder that these outputs are consumed elsewhere. |
-| 28-31 | `outputs:` | Job-level output declarations. Each maps a name to an expression. Downstream jobs access these via `${{ needs.cache-calc.outputs.dep-key }}`. |
-| 28 | `dep-key:` | Output name. The value is the expression `${{ steps.compute.outputs.dep-key }}`, which reads the `dep-key` output from the step with `id: compute`. |
-| 29 | `build-key:` | Same pattern: reads `steps.compute.outputs.build-key`. |
-| 30 | `docker-key:` | Same pattern: reads `steps.compute.outputs.docker-key`. |
-| 31 | `test-key:` | Same pattern: reads `steps.compute.outputs.test-key`. |
+| 1-23 | `#` 注释 | 文档头部，解释任务的用途和设计原理。 |
+| 24 | `cache-calc:` | 任务 ID。在工作流中必须唯一。用作 `needs:` 和 `needs.<id>.outputs.*` 中的标识符。 |
+| 25 | `runs-on: ubuntu-latest` | 指定运行器环境。`ubuntu-latest` 是标准 Linux 运行器（当前为 Ubuntu 22.04 或 24.04）。 |
+| 26-27 | `#` 注释 | 提醒这些输出在其他地方被消费。 |
+| 28-31 | `outputs:` | 任务级输出声明。每个输出将一个名称映射到一个表达式。下游任务通过 `${{ needs.cache-calc.outputs.dep-key }}` 访问。 |
+| 28 | `dep-key:` | 输出名称。值是表达式 `${{ steps.compute.outputs.dep-key }}`，它从 `id: compute` 的步骤读取 `dep-key` 输出。 |
+| 29 | `build-key:` | 相同模式：读取 `steps.compute.outputs.build-key`。 |
+| 30 | `docker-key:` | 相同模式：读取 `steps.compute.outputs.docker-key`。 |
+| 31 | `test-key:` | 相同模式：读取 `steps.compute.outputs.test-key`。 |
 
-#### Steps
+#### 步骤
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 33-34 | `#` comment + step | `uses: actions/checkout@v4` — the official checkout action. Clones the repository into the runner's workspace. **Required** for `hashFiles()` to find files. |
-| 35-46 | `#` comments | Documentation explaining the key computation strategy. |
-| 47 | `- id: compute` | Sets the step ID to `compute`. This ID is used by `steps.compute.outputs.*` in the job-level `outputs:` block. |
-| 48 | `name: Compute all cache keys` | Human-readable step name shown in the GitHub Actions log UI. |
-| 49 | `run: \|` | The pipe `\|` starts a multi-line YAML string (literal block scalar). Each line is preserved as-is with newlines. |
-| 50 | `echo "...dep-key..." >> "$GITHUB_OUTPUT"` | Writes a step output to the `GITHUB_OUTPUT` file. Format: `name=value`. The `$GITHUB_OUTPUT` file is a workflow command mechanism — any line written to this file becomes a step output accessible via `steps.<id>.outputs.<name>`. |
-| 51 | `${{ hashFiles('package-lock.json') }}` | The `hashFiles()` function computes a SHA-256 hash of the matched files. With a single file argument, it returns `hash(file)`. |
-| 52 | `${{ runner.os }}` | Expands to the operating system of the runner (e.g., `Linux`). |
-| 53 | `${{ hashFiles('src/**/*.ts', 'tsconfig.json', 'web/tsconfig.json') }}` | `hashFiles()` with multiple glob patterns computes a single combined hash of all matching files. The `**/*.ts` glob matches TypeScript files recursively in `src/`. |
-| 54 | `${{ hashFiles('Dockerfile', '.dockerignore') }}` | Hashes the Docker configuration files. |
-| 55 | `${{ hashFiles('src/**/*.test.ts', 'tests/**/*.test.ts') }}` | Hashes test files specifically. |
+| 33-34 | `#` 注释 + 步骤 | `uses: actions/checkout@v4` — 官方检出操作。将仓库克隆到运行器的工作区。`hashFiles()` **需要**此操作才能找到文件。 |
+| 35-46 | `#` 注释 | 说明键计算策略的文档。 |
+| 47 | `- id: compute` | 将步骤 ID 设置为 `compute`。此 ID 被任务级 `outputs:` 块中的 `steps.compute.outputs.*` 使用。 |
+| 48 | `name: Compute all cache keys` | 人类可读的步骤名称，显示在 GitHub Actions 日志 UI 中。 |
+| 49 | `run: \|` | 管道符 `\|` 开始一个多行 YAML 字符串（字面块标量）。每行原样保留并带有换行符。 |
+| 50 | `echo "...dep-key..." >> "$GITHUB_OUTPUT"` | 将步骤输出写入 `GITHUB_OUTPUT` 文件。格式：`name=value`。`$GITHUB_OUTPUT` 文件是一种工作流命令机制 — 写入此文件的任何行都成为可通过 `steps.<id>.outputs.<name>` 访问的步骤输出。 |
+| 51 | `${{ hashFiles('package-lock.json') }}` | `hashFiles()` 函数计算匹配文件的 SHA-256 哈希。对于单个文件参数，返回 `hash(file)`。 |
+| 52 | `${{ runner.os }}` | 展开为运行器的操作系统（例如 `Linux`）。 |
+| 53 | `${{ hashFiles('src/**/*.ts', 'tsconfig.json', 'web/tsconfig.json') }}` | `hashFiles()` 与多个 glob 模式计算所有匹配文件的单个组合哈希。`**/*.ts` glob 递归匹配 `src/` 中的 TypeScript 文件。 |
+| 54 | `${{ hashFiles('Dockerfile', '.dockerignore') }}` | 对 Docker 配置文件进行哈希。 |
+| 55 | `${{ hashFiles('src/**/*.test.ts', 'tests/**/*.test.ts') }}` | 专门对测试文件进行哈希。 |
 
-### Action Capability: Job Outputs (`outputs:`)
+### 动作能力：任务输出 (`outputs:`)
 
-**Syntax:**
+**语法：**
 ```yaml
 jobs:
   <job-id>:
@@ -382,137 +382,137 @@ jobs:
       <output-name>: <expression>
 ```
 
-**How outputs flow:**
-1. A step within the job writes to `$GITHUB_OUTPUT`:
+**输出如何流动：**
+1. 任务中的步骤写入 `$GITHUB_OUTPUT`：
    ```bash
    echo "my-key=some-value" >> "$GITHUB_OUTPUT"
    ```
-2. The step's output is accessed as `${{ steps.<step-id>.outputs.my-key }}`.
-3. The job's `outputs:` block maps this to a job-level output:
+2. 步骤的输出通过 `${{ steps.<step-id>.outputs.my-key }}` 访问。
+3. 任务的 `outputs:` 块将其映射到任务级输出：
    ```yaml
    outputs:
      my-key: ${{ steps.my-step.outputs.my-key }}
    ```
-4. Downstream jobs access it as `${{ needs.<job-id>.outputs.my-key }}`.
+4. 下游任务通过 `${{ needs.<job-id>.outputs.my-key }}` 访问。
 
-**Important constraints:**
-- Outputs are strings only (no arrays or objects)
-- Outputs from matrix jobs must reference the specific matrix variant
-- Output size is limited (approximately 1 MB total for all outputs)
+**重要约束：**
+- 输出只能是字符串（不能是数组或对象）
+- 矩阵任务的输出必须引用特定的矩阵变体
+- 输出大小有限制（所有输出总共约 1 MB）
 
-### Action Capability: `hashFiles()` Function
+### 动作能力：`hashFiles()` 函数
 
-**Syntax:**
+**语法：**
 ```
 hashFiles('<glob-pattern>', '<glob-pattern>', ...)
 ```
 
-**Behavior:**
-- Accepts one or more glob patterns
-- Returns a single SHA-256 hash of ALL files matched by ALL patterns
-- Files are sorted alphabetically before hashing, so the order of patterns doesn't matter
-- Returns an empty string if no files match
-- **Only works after `actions/checkout`** — the function reads from the workspace
+**行为：**
+- 接受一个或多个 glob 模式
+- 返回所有模式匹配的所有文件的单个 SHA-256 哈希
+- 文件在哈希前按字母顺序排序，因此模式的顺序无关紧要
+- 如果没有文件匹配，返回空字符串
+- **仅在 `actions/checkout` 之后有效** — 函数从工作区读取
 
-**Glob patterns:**
-- `*` — matches any characters except `/`
-- `**` — matches any number of directories (recursive)
-- `?` — matches a single character
-- `[abc]` — character range
-- `!` prefix — negate the pattern (exclude matching files)
+**Glob 模式：**
+- `*` — 匹配除 `/` 外的任意字符
+- `**` — 匹配任意数量的目录（递归）
+- `?` — 匹配单个字符
+- `[abc]` — 字符范围
+- `!` 前缀 — 否定模式（排除匹配的文件）
 
-**Examples:**
+**示例：**
 ```yaml
-# Single file
+# 单个文件
 hashFiles('package-lock.json')
 
-# Multiple patterns combined
+# 多个模式的组合
 hashFiles('src/**/*.ts', 'src/**/*.tsx', 'tsconfig.json')
 
-# Exclude test files from build hash
+# 从构建哈希中排除测试文件
 hashFiles('src/**/*.ts', '!src/**/*.test.ts')
 
-# No match → empty string (cache key would be constant!)
+# 无匹配 → 空字符串（缓存键将是常量！）
 hashFiles('nonexistent.file')
 ```
 
-### Why This Approach
+### 为什么采用这种方式
 
-**Centralized key computation** solves a real problem: when every job computes its own cache key, subtle differences in glob patterns cause cache misses. For example, one job uses `hashFiles('src/**/*.ts')` while another uses `hashFiles('src/**/*.ts', '!src/**/*.test.ts')`. These produce different hashes even when the same files changed.
+**集中式键计算**解决了一个实际问题：当每个任务计算自己的缓存键时，glob 模式的细微差异会导致缓存未命中。例如，一个任务使用 `hashFiles('src/**/*.ts')` 而另一个使用 `hashFiles('src/**/*.ts', '!src/**/*.test.ts')`。即使相同的文件发生了变化，它们也会产生不同的哈希值。
 
-**Key chaining** ensures that cache invalidation propagates correctly:
-- `build-key` includes the `package-lock.json` hash. When deps change, the build key changes too.
-- This prevents using a stale build output with newer dependencies.
-- No need for manual invalidation logic.
+**键链接**确保缓存失效正确传播：
+- `build-key` 包含 `package-lock.json` 的哈希。当依赖变化时，构建键也随之变化。
+- 这防止了使用过时的构建输出来配合更新的依赖。
+- 无需手动失效逻辑。
 
 ---
 
-## 7. Job 2: deps-install
+## 7. 任务 2：deps-install
 
 ### YAML
 
 ```yaml
 # =============================================================================
-# Job 2: deps-install — Install npm Dependencies with Caching (Matrix)
+# 任务 2：deps-install — 安装 npm 依赖并缓存（矩阵）
 # =============================================================================
-# Purpose: Install npm dependencies across 3 Node versions. Each combination
-# is cached independently and the resulting node_modules/ is uploaded as an
-# artifact for downstream jobs to consume.
+# 目的：在 3 个 Node 版本上安装 npm 依赖。每个组合
+# 独立缓存，并将生成的 node_modules/ 作为构件上传，
+# 供下游任务使用。
 #
-# Cache strategy:
-#   1. Attempt exact restore using the full dep-key (including node version)
-#   2. On miss, try restore-keys (prefix match — reusable across node versions)
-#   3. npm ci --prefer-offline (uses global npm cache as second fallback)
-#   4. Post-job: actions/cache auto-saves if key was missing (post-action)
+# 缓存策略：
+#   1. 尝试使用完整 dep-key（包括 node 版本）精确恢复
+#   2. 未命中时，尝试 restore-keys（前缀匹配 — 跨 node 版本可重用）
+#   3. npm ci --prefer-offline（使用全局 npm 缓存作为第二后备）
+#   4. 任务执行后：如果键之前缺失，actions/cache 自动保存（后操作）
 #
-# Why matrix node versions:
-#   - Ensures compatibility across all supported Node.js versions
-#   - Downstream build + test jobs use the same matrix for consistency
+# 为什么使用矩阵 node 版本：
+#   - 确保在所有受支持的 Node.js 版本上的兼容性
+#   - 下游构建 + 测试任务使用相同的矩阵以保持一致性
 # =============================================================================
 deps-install:
   needs: cache-calc
   runs-on: ubuntu-latest
   strategy:
     matrix:
-      node: [18, 20, 22]   # Active LTS releases per Node.js release schedule
+      node: [18, 20, 22]   # 根据 Node.js 发布计划的活动 LTS 版本
   steps:
     - uses: actions/checkout@v4
 
-    # setup-node with cache: npm manages the GLOBAL npm cache (~/.npm/)
-    # This speeds up npm ci even if our node_modules cache misses
+    # setup-node 与 cache: npm 管理全局 npm 缓存 (~/.npm/)
+    # 即使我们的 node_modules 缓存未命中，这也加速了 npm ci
     - uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node }}
         cache: npm
 
-    # Explicit cache restore for node_modules/
-    # Using actions/cache/restore@v4 (the restore-only sub-action) gives us
-    # exact control — we only restore here and let the post-job save handle
-    # persistence after npm ci modifies node_modules.
-    - name: Restore node_modules cache
+    # 显式的 node_modules/ 缓存恢复
+    # 使用 actions/cache/restore@v4（仅恢复子操作）让我们
+    # 精确控制 — 我们只在此处恢复，让任务后的保存处理
+    # npm ci 修改 node_modules 后的持久化。
+    - name: 恢复 node_modules 缓存
       id: deps-cache-restore
       uses: actions/cache/restore@v4
       with:
         path: node_modules
-        # Full key includes node version — different Node builds produce
-        # different node_modules (native addons like better-sqlite3)
+        # 完整键包括 node 版本 — 不同的 Node 构建产生
+        # 不同的 node_modules（本机插件如 better-sqlite3）
         key: ${{ needs.cache-calc.outputs.dep-key }}-${{ matrix.node }}
-        # Fallback restore keys (prefix-based partial match):
-        #   1. Same OS + lockfile, any node version
-        #   2. Same OS only, any lockfile
-        # GitHub Actions returns the LATEST written cache matching the prefix
+        # 后备恢复键（基于前缀的部分匹配）：
+        #   1. 相同 OS + 锁定文件，任意 node 版本
+        #   2. 仅相同 OS，任意锁定文件
+        # GitHub Actions 返回匹配该前缀的最新写入缓存
         restore-keys: |
           ${{ needs.cache-calc.outputs.dep-key }}-
           npm-cache-
 
-    # --prefer-offline: use global npm cache first, only fetch missing packages
-    - name: Install dependencies
+    # --prefer-offline：优先使用全局 npm 缓存，仅获取缺失的包
+    - name: 安装依赖
       run: npm ci --prefer-offline
 
-    # Upload the full node_modules/ as a build artifact
-    # Downstream jobs download this instead of re-running npm ci
-    # Retention: 1 day (short — artifacts are only needed within a single run)
-    - name: Upload node_modules artifact
+    # 上传完整的 node_modules/ 作为构建构件
+    # 下游任务下载此构件而无需重新运行 npm ci
+    # 保留：1 天（短 — 构件仅在单个运行内需要）
+    - name: 上传 node_modules 构件
       uses: actions/upload-artifact@v4
       with:
         name: node_modules-${{ matrix.node }}
@@ -520,149 +520,149 @@ deps-install:
         retention-days: 1
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-#### Job Definition
+#### 任务定义
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1-22 | `#` comments | Documentation header. |
-| 23 | `deps-install:` | Job ID. Uses a hyphenated name (kebab-case), which is the most common convention for GitHub Actions job IDs. |
-| 24 | `needs: cache-calc` | Declares dependency on the `cache-calc` job. This job will NOT start until `cache-calc` completes successfully. If `cache-calc` fails, this job is skipped (unless `if: always()` is used). |
-| 25 | `runs-on: ubuntu-latest` | All deps-install matrix jobs run on Ubuntu. |
-| 26-28 | `strategy:` / `matrix:` | Defines the build matrix. The job runs once for each combination of values. |
-| 27 | `node: [18, 20, 22]` | Three values → three parallel job instances. Each instance has `${{ matrix.node }}` set to one of these values. |
-| 29-31 | Steps | Checkout and setup. |
+| 1-22 | `#` 注释 | 文档头部。 |
+| 23 | `deps-install:` | 任务 ID。使用连字符名称（kebab-case），这是 GitHub Actions 任务 ID 最常见的约定。 |
+| 24 | `needs: cache-calc` | 声明对 `cache-calc` 任务的依赖。此任务在 `cache-calc` 成功完成之前不会启动。如果 `cache-calc` 失败，此任务将被跳过（除非使用了 `if: always()`）。 |
+| 25 | `runs-on: ubuntu-latest` | 所有 deps-install 矩阵任务在 Ubuntu 上运行。 |
+| 26-28 | `strategy:` / `matrix:` | 定义构建矩阵。任务对每个值组合运行一次。 |
+| 27 | `node: [18, 20, 22]` | 三个值 → 三个并行任务实例。每个实例的 `${{ matrix.node }}` 设置为这些值之一。 |
+| 29-31 | 步骤 | 检出和设置。 |
 
-#### Matrix Step
+#### 矩阵步骤
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 33 | `- uses: actions/setup-node@v4` | The official Node.js setup action. Downloads and caches the specified Node.js version. |
-| 35 | `node-version: ${{ matrix.node }}` | `${{ matrix.node }}` expands to the current matrix value (18, 20, or 22). |
-| 36 | `cache: npm` | **Critical feature:** tells setup-node to save/restore the global npm cache (`~/.npm/`). This speeds up `npm ci` by avoiding re-downloading packages from the registry. Unlike our node_modules cache, this is a package-level cache, not a `node_modules/` cache. |
+| 33 | `- uses: actions/setup-node@v4` | 官方 Node.js 设置操作。下载并缓存指定的 Node.js 版本。 |
+| 35 | `node-version: ${{ matrix.node }}` | `${{ matrix.node }}` 展开为当前矩阵值（18、20 或 22）。 |
+| 36 | `cache: npm` | **关键特性：** 告诉 setup-node 保存/恢复全局 npm 缓存（`~/.npm/`）。这通过避免从注册表重新下载包来加速 `npm ci`。与我们的 node_modules 缓存不同，这是包级缓存，而不是 `node_modules/` 缓存。 |
 
-#### Cache Restore Step
+#### 缓存恢复步骤
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 38-39 | `name:` + `id:` | Human-readable name and machine-readable ID. The `id:` is used to check `steps.deps-cache-restore.outputs.cache-hit` later. |
-| 40 | `uses: actions/cache/restore@v4` | The restore-only sub-action from the `actions/cache` bundle. Version `v4` is the latest stable. |
-| 42 | `path: node_modules` | The directory to restore from cache. Must match exactly what was cached. |
-| 44 | `key: ${{ needs.cache-calc.outputs.dep-key }}-${{ matrix.node }}` | The primary cache key. Constructed from: `dep-key` from cache-calc (contains lockfile hash + OS) + node version. Example: `npm-cache-a1b2c3d4-Linux-20`. |
-| 46-47 | `restore-keys: \|` + multi-line | Fallback keys for partial matches. The pipe `\|` creates a multi-line string. Each line is tried in order if the primary key misses. |
-| 46 | `${{ needs.cache-calc.outputs.dep-key }}-` | First fallback: matches any cache whose key starts with this prefix. Since dep-key includes lockfile hash and OS but NOT node version, this matches any node version for the same lockfile+OS. |
-| 47 | `npm-cache-` | Second fallback: matches ANY cache with the `npm-cache-` prefix. Catches the case where the lockfile changed but there's some prior cache. |
+| 38-39 | `name:` + `id:` | 人类可读的名称和机器可读的 ID。`id:` 用于稍后检查 `steps.deps-cache-restore.outputs.cache-hit`。 |
+| 40 | `uses: actions/cache/restore@v4` | `actions/cache` 包中的仅恢复子操作。版本 `v4` 是最新的稳定版本。 |
+| 42 | `path: node_modules` | 要从缓存恢复的目录。必须与缓存时的路径完全匹配。 |
+| 44 | `key: ${{ needs.cache-calc.outputs.dep-key }}-${{ matrix.node }}` | 主缓存键。由以下部分组成：来自 cache-calc 的 `dep-key`（包含锁定文件哈希 + 操作系统）+ node 版本。示例：`npm-cache-a1b2c3d4-Linux-20`。 |
+| 46-47 | `restore-keys: \|` + 多行 | 用于部分匹配的后备键。管道符 `\|` 创建一个多行字符串。如果主键未命中，则依次尝试每一行。 |
+| 46 | `${{ needs.cache-calc.outputs.dep-key }}-` | 第一个后备：匹配键以此前缀开头的任何缓存。由于 dep-key 包括锁定文件哈希和操作系统但不包括 node 版本，因此这匹配相同锁定文件+操作系统的任何 node 版本。 |
+| 47 | `npm-cache-` | 第二个后备：匹配任何以 `npm-cache-` 前缀的缓存。捕获锁定文件已更改但存在某些先前缓存的情况。 |
 
-#### Install Step
+#### 安装步骤
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 50 | `run: npm ci --prefer-offline` | `npm ci` — clean install from lockfile (faster and more reproducible than `npm install`). `--prefer-offline` tells npm to use the global cache first, only fetching missing packages. If the node_modules restore hit, this step is fast (just verification); if the restore missed but the npm global cache hit, it avoids network fetches. |
+| 50 | `run: npm ci --prefer-offline` | `npm ci` — 从锁定文件进行干净安装（比 `npm install` 更快且更可重现）。`--prefer-offline` 告诉 npm 优先使用全局缓存，仅获取缺失的包。如果 node_modules 恢复命中，此步骤很快（仅验证）；如果恢复未命中但 npm 全局缓存命中，则避免网络获取。 |
 
-#### Artifact Upload Step
+#### 构件上传步骤
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 52-57 | Upload step | Uploads the installed `node_modules/` as a build artifact. |
-| 54 | `name: node_modules-${{ matrix.node }}` | Artifact name unique per node version. Example: `node_modules-20`. |
-| 55 | `path: node_modules/` | Path to upload. The trailing `/` is optional but conventional. |
-| 56 | `retention-days: 1` | **Key setting:** artifacts are deleted after 1 day. Build artifacts are only needed within the same workflow run, which typically takes minutes, not days. Short retention saves storage costs. |
+| 52-57 | 上传步骤 | 上传已安装的 `node_modules/` 作为构建构件。 |
+| 54 | `name: node_modules-${{ matrix.node }}` | 每个 node 版本唯一的构件名称。示例：`node_modules-20`。 |
+| 55 | `path: node_modules/` | 要上传的路径。尾部的 `/` 可选但符合惯例。 |
+| 56 | `retention-days: 1` | **关键设置：** 构件在 1 天后删除。构建构件仅在同一个工作流运行中需要，通常只需几分钟，而不是几天。短保留期节省存储成本。 |
 
-### Action Capability: `actions/cache/restore@v4`
+### 动作能力：`actions/cache/restore@v4`
 
-**Purpose:** Restore a previously cached directory by key.
+**目的：** 通过键恢复先前缓存的目录。
 
-**Key inputs:**
+**关键输入：**
 
-| Input | Required | Description |
+| 输入 | 必需 | 描述 |
 |-------|----------|-------------|
-| `path` | Yes | File/directory paths to restore (supports globs, multiple paths separated by newlines) |
-| `key` | Yes | Exact cache key to look up |
-| `restore-keys` | No | Ordered list of prefix keys for fallback matching |
-| `fail-on-cache-miss` | No | If `true`, fail the step when no cache entry matches (default: `false`) |
-| `lookup-only` | No | If `true`, check if cache exists without restoring (for pre-flight checks) |
+| `path` | 是 | 要恢复的文件/目录路径（支持 glob，多个路径用换行符分隔） |
+| `key` | 是 | 要查找的精确缓存键 |
+| `restore-keys` | 否 | 用于后备匹配的前缀键的有序列表 |
+| `fail-on-cache-miss` | 否 | 如果为 `true`，在没有匹配的缓存条目时使步骤失败（默认：`false`） |
+| `lookup-only` | 否 | 如果为 `true`，检查缓存是否存在而不恢复（用于预检检查） |
 
-**Key outputs:**
+**关键输出：**
 
-| Output | Description |
+| 输出 | 描述 |
 |--------|-------------|
-| `cache-hit` | `"true"` if an exact match was found, `"false"` if only partial match or miss |
-| `cache-primary-key` | The key that was provided |
-| `cache-matched-key` | The actual key that was matched (may differ with restore-keys) |
+| `cache-hit` | 如果找到精确匹配则为 `"true"`，如果只有部分匹配或未命中则为 `"false"` |
+| `cache-primary-key` | 提供的键 |
+| `cache-matched-key` | 实际匹配的键（可能因 restore-keys 而不同） |
 
-**Cache matching logic:**
+**缓存匹配逻辑：**
 
-1. Try exact match with `key`. If found → `cache-hit: "true"`, restore immediately.
-2. If no exact match, try each `restore-keys` in order. For each, find the MOST RECENTLY WRITTEN cache entry whose key STARTS WITH the prefix.
-3. If any restore-key matches → `cache-hit: "false"` (important: not `"true"`), restore from partial match.
-4. If no match at all → nothing is restored.
+1. 尝试与 `key` 精确匹配。如果找到 → `cache-hit: "true"`，立即恢复。
+2. 如果没有精确匹配，依次尝试每个 `restore-keys`。对于每个键，找到键以此前缀开头的**最近写入**的缓存条目。
+3. 如果任何 restore-key 匹配 → `cache-hit: "false"`（重要：不是 `"true"`），从部分匹配恢复。
+4. 如果没有匹配 → 不恢复任何内容。
 
-**The `cache-hit` distinction matters:**
-- `"true"` → node_modules is exactly what `npm ci` would produce. Safe to skip `npm ci`.
-- `"false"` → node_modules is from a different key. Should run `npm ci` to ensure correctness. However, the partial restore speeds up `npm ci` because most packages are already present.
+**`cache-hit` 的区别很重要：**
+- `"true"` → node_modules 正是 `npm ci` 会生成的结果。可以安全跳过 `npm ci`。
+- `"false"` → node_modules 来自不同的键。应该运行 `npm ci` 以确保正确性。不过，部分恢复加速了 `npm ci`，因为大多数包已经存在。
 
-### Action Capability: `actions/cache@v4` (Full Action)
+### 动作能力：`actions/cache@v4`（完整操作）
 
-The full `actions/cache@v4` action combines restore (pre-step) and save (post-step). When you use `actions/cache@v4` in a step, it:
-1. Restores the cache at the start of the step (like `cache/restore`)
-2. Registers a post-job hook that saves the cache AFTER the job completes (like `cache/save`)
+完整的 `actions/cache@v4` 操作结合了恢复（前步骤）和保存（后步骤）。当你在步骤中使用 `actions/cache@v4` 时，它：
+1. 在步骤开始时恢复缓存（类似于 `cache/restore`）
+2. 注册一个任务后钩子，在任务完成后保存缓存（类似于 `cache/save`）
 
-**Why we use `cache/restore` instead of `cache`:** Separating restore and save gives us finer control. We restore explicitly, run `npm ci`, and let the automatic post-action save handle persistence. The post-action save only runs if the cache key was NEW (not on cache hit). This avoids unnecessary cache writes.
+**为什么我们使用 `cache/restore` 而不是 `cache`：** 分离恢复和保存让我们有更精细的控制。我们显式地恢复，运行 `npm ci`，然后让自动的后操作保存处理持久化。后操作保存仅在缓存键是**新**的时运行（不是在缓存命中时）。这避免了不必要的缓存写入。
 
-### Action Capability: `actions/upload-artifact@v4`
+### 动作能力：`actions/upload-artifact@v4`
 
-**Purpose:** Upload files from the runner to GitHub's artifact storage.
+**目的：** 将文件从运行器上传到 GitHub 的构件存储。
 
-**Key inputs:**
+**关键输入：**
 
-| Input | Required | Description |
+| 输入 | 必需 | 描述 |
 |-------|----------|-------------|
-| `name` | Yes (default: `artifact`) | Artifact name for identification. Used by `download-artifact`. |
-| `path` | Yes | File/directory paths to upload (supports globs, multiple paths) |
-| `retention-days` | No | Days to keep the artifact (default: 90, max: depends on org settings) |
-| `if-no-files-found` | No | What to do if no files match: `warn` (default), `error`, `ignore` |
-| `compression-level` | No | Gzip compression level (0-9, default: 6) |
+| `name` | 是（默认：`artifact`） | 用于标识的构件名称。由 `download-artifact` 使用。 |
+| `path` | 是 | 要上传的文件/目录路径（支持 glob，多个路径） |
+| `retention-days` | 否 | 构件保留天数（默认：90，最大：取决于组织设置） |
+| `if-no-files-found` | 否 | 如果没有文件匹配时的行为：`warn`（默认）、`error`、`ignore` |
+| `compression-level` | 否 | Gzip 压缩级别（0-9，默认：6） |
 
-**Retention notes:**
-- Default retention is 90 days (adjustable at org level)
-- Set SHORT retention for intermediate artifacts (1-3 days)
-- Long retention only for final release artifacts
-- GitHub bills storage per month; short retention reduces costs
+**保留期说明：**
+- 默认保留期为 90 天（可在组织级别调整）
+- 为中间构件设置**短**保留期（1-3 天）
+- 仅为最终发布构件设置长保留期
+- GitHub 按月计费存储空间；短保留期降低成本
 
-### Why This Approach
+### 为什么采用这种方式
 
-**Matrix for Node versions:** Ensures compatibility. Native modules (like `better-sqlite3`) may compile differently across Node versions.
+**用于 Node 版本的矩阵：** 确保兼容性。本机模块（如 `better-sqlite3`）在不同 Node 版本上可能编译不同。
 
-**Separate cache per node version:** Two jobs with different `matrix.node` values produce different cache keys. Node 20's native addons don't work with Node 22's runtime. If we used a shared cache, we'd get runtime errors.
+**每个 node 版本单独的缓存：** 两个具有不同 `matrix.node` 值的任务产生不同的缓存键。Node 20 的本机插件与 Node 22 的运行时不兼容。如果我们使用共享缓存，会出现运行时错误。
 
-**Fallback `restore-keys`:**
-- If the exact key `npm-cache-a1b2c-Linux-22` misses (e.g., first CI run for node 22), the fallback `npm-cache-a1b2c-Linux-` matches the cache from a previous node 20 run.
-- This gives a useful partial restore even on the first run for a new node version.
-- `npm ci` only needs to fetch packages that differ between node versions.
+**后备 `restore-keys`：**
+- 如果精确键 `npm-cache-a1b2c-Linux-22` 未命中（例如，node 22 的第一次 CI 运行），后备键 `npm-cache-a1b2c-Linux-` 匹配先前 node 20 运行的缓存。
+- 即使在新的 node 版本的第一次运行中，这也提供了有用的部分恢复。
+- `npm ci` 只需要获取那些在 node 版本之间不同的包。
 
-**Artifact instead of cache for downstream jobs:**
-- Artifacts are faster to download than cache restores (within the same workflow run)
-- Artifacts don't have the cache size limits (10GB vs ~2GB per cache entry)
-- Artifacts are isolated to the specific workflow run — no cross-run contamination
-- Cache is for COLD START (first run on a branch), artifacts are for SUBSEQUENT JOBS within the same run
+**下游任务使用构件而不是缓存：**
+- 构件比缓存恢复更快（在同一工作流运行内）
+- 构件没有缓存大小限制（每个缓存条目约 10GB 对比约 2GB）
+- 构件隔离到特定工作流运行 — 没有跨运行污染
+- 缓存用于**冷启动**（分支上的第一次运行），构件用于同一运行内的**后续任务**
 
 ---
 
-## 8. Job 3: lint
+## 8. 任务 3：lint
 
 ### YAML
 
 ```yaml
 # =============================================================================
-# Job 3: lint — Lint + TypeScript Type Check
+# 任务 3：lint — Lint + TypeScript 类型检查
 # =============================================================================
-# Purpose: Fastest-feedback job. Lint and typecheck run as soon as dependencies
-# are installed, without waiting for the full build pipeline.
+# 目的：最快反馈任务。Lint 和类型检查在依赖安装后立即运行，
+# 无需等待完整的构建管道。
 #
-# This job intentionally uses a SINGLE Node version (20 from env):
-#   - Linting and type checking are toolchain concerns, not runtime concerns
-#   - Running across 3 nodes would waste CI minutes with no additional signal
+# 此任务有意使用单个 Node 版本（来自 env 的 20）：
+#   - Lint 和类型检查是工具链问题，而非运行时问题
+#   - 在 3 个节点上运行会浪费 CI 分钟数且不会提供额外信号
 # =============================================================================
 lint:
   needs: deps-install
@@ -674,86 +674,86 @@ lint:
       with:
         node-version: ${{ env.NODE_VERSION }}
 
-    # Download node_modules from the deps-install matrix for node 20
-    # This avoids re-running npm ci — saves ~30-60s per run
-    - name: Download node_modules
+    # 从 deps-install 矩阵下载 node 20 的 node_modules
+    # 这避免了重新运行 npm ci — 每次运行节省约 30-60 秒
+    - name: 下载 node_modules
       uses: actions/download-artifact@v4
       with:
         name: node_modules-${{ env.NODE_VERSION }}
         path: node_modules
 
-    - name: Run linter
+    - name: 运行 linter
       run: npm run lint
 
-    - name: TypeScript type check
+    - name: TypeScript 类型检查
       run: npx tsc --noEmit
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1-14 | `#` comments | Documentation. Key point: lint is single-node for speed. |
-| 15 | `lint:` | Job ID. |
-| 16 | `needs: deps-install` | Depends on `deps-install`. Subtle point: `deps-install` is a matrix job. When you put a matrix job in `needs:`, you wait for ALL matrix variants to complete. However, we only download the node 20 variant. |
-| 17 | `runs-on: ubuntu-latest` | Linux runner. |
-| 19-20 | Checkout | Standard checkout. |
-| 22-25 | Setup Node | Uses `${{ env.NODE_VERSION }}` (20). No `cache: npm` needed because we're not running `npm ci`. |
-| 27-32 | Download `node_modules` | Downloads the pre-installed `node_modules` artifact from `deps-install` for node 20. |
-| 29 | `name: node_modules-${{ env.NODE_VERSION }}` | Matches the artifact name from `deps-install`. This must match EXACTLY — artifact names are case-sensitive. |
-| 30 | `path: node_modules` | Where to place the downloaded artifact in the workspace. |
-| 33-34 | `npm run lint` | Runs the linter (ESLint). `package.json` script: `eslint src/ tests/`. |
-| 35-36 | `npx tsc --noEmit` | TypeScript type check without emitting output files. `--noEmit` is critical — it tells `tsc` to only type-check, not compile. This is faster than a full compilation. |
+| 1-14 | `#` 注释 | 文档。关键点：lint 为单节点以提高速度。 |
+| 15 | `lint:` | 任务 ID。 |
+| 16 | `needs: deps-install` | 依赖于 `deps-install`。微妙之处：`deps-install` 是一个矩阵任务。当你将矩阵任务放入 `needs:` 时，你等待所有矩阵变体完成。不过，我们只下载 node 20 的变体。 |
+| 17 | `runs-on: ubuntu-latest` | Linux 运行器。 |
+| 19-20 | 检出 | 标准检出。 |
+| 22-25 | 设置 Node | 使用 `${{ env.NODE_VERSION }}`（20）。不需要 `cache: npm`，因为我们不运行 `npm ci`。 |
+| 27-32 | 下载 `node_modules` | 从 `deps-install` 下载 node 20 的预安装 `node_modules` 构件。 |
+| 29 | `name: node_modules-${{ env.NODE_VERSION }}` | 匹配 `deps-install` 中的构件名称。这必须**精确**匹配 — 构件名称区分大小写。 |
+| 30 | `path: node_modules` | 将下载的构件放置在工作区中的位置。 |
+| 33-34 | `npm run lint` | 运行 linter（ESLint）。`package.json` 脚本：`eslint src/ tests/`。 |
+| 35-36 | `npx tsc --noEmit` | TypeScript 类型检查，不输出文件。`--noEmit` 很关键 — 它告诉 `tsc` 只进行类型检查，不编译。这比完整编译更快。 |
 
-### Action Capability: `actions/download-artifact@v4`
+### 动作能力：`actions/download-artifact@v4`
 
-**Purpose:** Download artifacts previously uploaded in the same workflow run (or from another workflow run when using `workflow-run-id`).
+**目的：** 下载在同一工作流运行中先前上传的构件（或在使用 `workflow-run-id` 时从其他工作流运行下载）。
 
-**Key inputs:**
+**关键输入：**
 
-| Input | Required | Description |
+| 输入 | 必需 | 描述 |
 |-------|----------|-------------|
-| `name` | No | Artifact name to download. If not specified, downloads ALL artifacts from the run. |
-| `path` | No | Destination directory (default: `$GITHUB_WORKSPACE`). |
-| `github-token` | No | Token for cross-workflow artifact downloads (rarely needed). |
-| `run-id` | No | Download from a specific run instead of the current run. |
+| `name` | 否 | 要下载的构件名称。如果未指定，下载运行中的所有构件。 |
+| `path` | 否 | 目标目录（默认：`$GITHUB_WORKSPACE`）。 |
+| `github-token` | 否 | 用于跨工作流构件下载的令牌（很少需要）。 |
+| `run-id` | 否 | 从特定运行而不是当前运行下载。 |
 
-**Important in v4 (vs. v3):**
-- v4 requires explicit `name:` when you want a specific artifact (no more merging all artifacts)
-- v4 preserves the original file structure without flattening
-- v4 is faster and uses less storage (streaming instead of ZIP-in-memory)
+**v4 中的重要变化（与 v3 相比）：**
+- v4 在需要特定构件时需要显式的 `name:`（不再合并所有构件）
+- v4 保留原始文件结构，不扁平化
+- v4 更快且使用更少存储（流式传输而非内存中的 ZIP）
 
-**Download behavior:**
-- If `name` matches one artifact, only that artifact is downloaded
-- If `name` is not specified, ALL artifacts from the run are downloaded (use with caution — may be slow)
-- If the artifact was uploaded from a directory, the directory structure is preserved
+**下载行为：**
+- 如果 `name` 匹配一个构件，仅下载该构件
+- 如果未指定 `name`，下载运行中的所有构件（谨慎使用 — 可能很慢）
+- 如果构件是从目录上传的，目录结构会被保留
 
-### Why This Approach
+### 为什么采用这种方式
 
-**Single node for linting:** Linting and type checking operate on source code, not runtime behavior. There is no difference in lint results between Node 18, 20, and 22. Running lint across all three nodes would triple CI time with zero additional signal.
+**单个节点用于 lint：** Lint 和类型检查操作的是源代码，而非运行时行为。Node 18、20 和 22 之间的 lint 结果没有差异。在所有三个节点上运行 lint 会使 CI 时间增加三倍，而不会产生任何额外信号。
 
-**Artifact download instead of cache restore:** Artifacts are faster for same-run data transfer. Cache requires an HTTP request to query keys, then a download. Artifacts are direct downloads with no lookup overhead.
+**构件下载而不是缓存恢复：** 同一运行内的数据传输，构件更快。缓存需要 HTTP 请求来查询键，然后下载。构件是直接下载，没有查找开销。
 
-**Sequential lint → typecheck:** ESLint and TypeScript are independent tools. They could run in parallel, but on a single runner there's no benefit (the runner has one CPU). Running them sequentially is simpler and equally fast.
+**顺序 lint → 类型检查：** ESLint 和 TypeScript 是独立的工具。它们可以并行运行，但在单个运行器上没有好处（运行器只有一个 CPU）。顺序运行更简单且同样快。
 
 ---
 
-## 9. Job 4: docker-prepare
+## 9. 任务 4：docker-prepare
 
 ### YAML
 
 ```yaml
 # =============================================================================
-# Job 4: docker-prepare — Pre-build Docker Layers
+# 任务 4：docker-prepare — 预构建 Docker 层
 # =============================================================================
-# Purpose: Build Docker image layers and push them to the GitHub Actions cache.
-# Runs in parallel with lint for maximum pipeline efficiency.
+# 目的：构建 Docker 镜像层并将其推送到 GitHub Actions 缓存。
+# 与 lint 并行运行，实现最大的管道效率。
 #
-# Uses Docker BuildKit's GitHub Actions cache backend (type=gha).
-# Layer cache is keyed by the docker-key from cache-calc.
+# 使用 Docker BuildKit 的 GitHub Actions 缓存后端（type=gha）。
+# 层缓存由 cache-calc 中的 docker-key 键控。
 #
-# Key design: push: false — we only build to populate the layer cache,
-# not to publish an image. Actual image publishing happens in the deploy workflow.
+# 关键设计：push: false — 我们只构建以填充层缓存，
+# 而不是发布镜像。实际的镜像发布在部署工作流中完成。
 # =============================================================================
 docker-prepare:
   needs: cache-calc
@@ -761,9 +761,9 @@ docker-prepare:
   steps:
     - uses: actions/checkout@v4
 
-    # docker/metadata-action generates Docker image tags and labels from
-    # the Git context: branch name, commit SHA, semantic version, etc.
-    - name: Generate Docker metadata
+    # docker/metadata-action 从 Git 上下文生成 Docker 镜像标签和标签：
+    # 分支名称、提交 SHA、语义版本等。
+    - name: 生成 Docker 元数据
       id: meta
       uses: docker/metadata-action@v5
       with:
@@ -773,16 +773,16 @@ docker-prepare:
           type=sha,format=short
           type=raw,value=latest,enable={{is_default_branch}}
 
-    # setup-buildx-action initializes BuildKit with default configuration
-    - name: Set up Docker Buildx
+    # setup-buildx-action 使用默认配置初始化 BuildKit
+    - name: 设置 Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    # Build the image WITHOUT pushing (push: false).
-    # cache-from: type=gha — restore cached layers from previous runs
-    # cache-to: type=gha,mode=max — save ALL layers (not just final), allowing
-    #   maximal cache reuse across builds. mode=max stores every intermediate
-    #   layer; mode=min only stores the final image layers.
-    - name: Build and cache Docker layers
+    # 构建镜像但不推送（push: false）。
+    # cache-from: type=gha — 从先前运行恢复缓存的层
+    # cache-to: type=gha,mode=max — 保存所有层（不仅是最终的），允许
+    #   跨构建的最大化缓存重用。mode=max 存储每个中间
+    #   层；mode=min 仅存储最终镜像层。
+    - name: 构建并缓存 Docker 层
       uses: docker/build-push-action@v6
       with:
         context: .
@@ -793,93 +793,93 @@ docker-prepare:
         cache-to: type=gha,mode=max
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1-14 | `#` comments | Documentation. Key point: no push, only cache build. |
-| 15 | `docker-prepare:` | Job ID. |
-| 16 | `needs: cache-calc` | Only needs `cache-calc` (for the docker-key, though it's used implicitly via `type=gha`). Does NOT need `deps-install` — this runs in parallel with `lint`. |
-| 17 | `runs-on: ubuntu-latest` | Docker is only available on Linux runners (macOS/Windows runners don't support Docker out of the box). |
-| 19 | Checkout | Standard checkout. |
-| 21-28 | Docker metadata | Generates tags and labels for the Docker image. |
-| 23 | `id: meta` | Step ID for accessing outputs. |
-| 24 | `uses: docker/metadata-action@v5` | Official Docker action for generating metadata. |
-| 26 | `images: ghcr.io/${{ github.repository }}` | Container registry + image name. `ghcr.io` is the GitHub Container Registry. `${{ github.repository }}` expands to `owner/repo-name`. |
-| 27-29 | `tags:` | Tag generation rules. Each line is a tag type. |
-| 28 | `type=ref,event=branch` | Generate a tag from the branch name (e.g., `dev`, `main`). |
-| 29 | `type=sha,format=short` | Generate a tag from the short commit SHA (e.g., `sha-a1b2c3d`). |
-| 30 | `type=raw,value=latest,enable={{is_default_branch}}` | Only add the `latest` tag on the default branch (main). `{{is_default_branch}}` is a template variable in metadata-action, NOT a GitHub Actions expression. |
-| 32-33 | `docker/setup-buildx-action@v3` | Sets up Docker BuildKit (the modern Docker build backend). Ensures BuildKit features are available (cache mounts, multi-platform builds, etc.). |
-| 35-46 | Main build step. | |
-| 37 | `uses: docker/build-push-action@v6` | Official Docker build-and-push action. |
-| 39 | `context: .` | Build context — the directory sent to the Docker daemon during build. |
-| 40 | `push: false` | **Key:** Build the image but do NOT push to a registry. This step is purely for cache warming. |
-| 41 | `tags: ${{ steps.meta.outputs.tags }}` | Tags from the metadata action (newline-separated). |
-| 42 | `labels: ${{ steps.meta.outputs.labels }}` | Labels from the metadata action. |
-| 43 | `cache-from: type=gha` | **Cache source:** use GitHub Actions cache as the BuildKit cache backend. Restores layers from previous runs. |
-| 44 | `cache-to: type=gha,mode=max` | **Cache destination:** save layers to GitHub Actions cache. `mode=max` saves ALL layers (including intermediate); `mode=min` only saves the final image layers. `max` gives better cache hits at the cost of more cache storage. |
+| 1-14 | `#` 注释 | 文档。关键点：不推送，仅缓存构建。 |
+| 15 | `docker-prepare:` | 任务 ID。 |
+| 16 | `needs: cache-calc` | 仅需要 `cache-calc`（用于 docker-key，虽然通过 `type=gha` 隐式使用）。不需要 `deps-install` — 这与 `lint` 并行运行。 |
+| 17 | `runs-on: ubuntu-latest` | Docker 仅在 Linux 运行器上可用（macOS/Windows 运行器默认不支持 Docker）。 |
+| 19 | 检出 | 标准检出。 |
+| 21-28 | Docker 元数据 | 为 Docker 镜像生成标签和标签。 |
+| 23 | `id: meta` | 用于访问输出的步骤 ID。 |
+| 24 | `uses: docker/metadata-action@v5` | 用于生成元数据的官方 Docker 操作。 |
+| 26 | `images: ghcr.io/${{ github.repository }}` | 容器注册表 + 镜像名称。`ghcr.io` 是 GitHub Container Registry。`${{ github.repository }}` 展开为 `owner/repo-name`。 |
+| 27-29 | `tags:` | 标签生成规则。每行是一个标签类型。 |
+| 28 | `type=ref,event=branch` | 从分支名称生成标签（例如 `dev`、`main`）。 |
+| 29 | `type=sha,format=short` | 从短提交 SHA 生成标签（例如 `sha-a1b2c3d`）。 |
+| 30 | `type=raw,value=latest,enable={{is_default_branch}}` | 仅在默认分支（main）上添加 `latest` 标签。`{{is_default_branch}}` 是 metadata-action 中的模板变量，不是 GitHub Actions 表达式。 |
+| 32-33 | `docker/setup-buildx-action@v3` | 设置 Docker BuildKit（现代 Docker 构建后端）。确保 BuildKit 功能可用（缓存挂载、多平台构建等）。 |
+| 35-46 | 主构建步骤。 | |
+| 37 | `uses: docker/build-push-action@v6` | 官方 Docker 构建和推送操作。 |
+| 39 | `context: .` | 构建上下文 — 构建期间发送到 Docker 守护进程的目录。 |
+| 40 | `push: false` | **关键：** 构建镜像但不推送到注册表。此步骤纯粹用于缓存预热。 |
+| 41 | `tags: ${{ steps.meta.outputs.tags }}` | 来自元数据操作的标签（换行分隔）。 |
+| 42 | `labels: ${{ steps.meta.outputs.labels }}` | 来自元数据操作的标签。 |
+| 43 | `cache-from: type=gha` | **缓存源：** 使用 GitHub Actions 缓存作为 BuildKit 缓存后端。从先前运行恢复层。 |
+| 44 | `cache-to: type=gha,mode=max` | **缓存目标：** 将层保存到 GitHub Actions 缓存。`mode=max` 保存所有层（包括中间层）；`mode=min` 仅保存最终镜像层。`max` 提供更好的缓存命中率，但需要更多缓存存储空间。 |
 
-### Action Capability: `docker/build-push-action@v6`
+### 动作能力：`docker/build-push-action@v6`
 
-**Key inputs:**
+**关键输入：**
 
-| Input | Description |
+| 输入 | 描述 |
 |-------|-------------|
-| `context` | Build context directory |
-| `push` | Push to registry (boolean) |
-| `tags` | Image tags (newline or comma separated) |
-| `labels` | Image metadata labels |
-| `cache-from` | Cache import sources (e.g., `type=gha`, `type=registry,ref=image:cache`) |
-| `cache-to` | Cache export targets (e.g., `type=gha,mode=max`) |
-| `build-args` | Docker build-time variables |
-| `file` | Dockerfile path (default: `{context}/Dockerfile`) |
-| `platforms` | Target platforms (for multi-arch builds) |
-| `provenance` | Build provenance attestation mode |
-| `sbom` | SBOM generation mode |
+| `context` | 构建上下文目录 |
+| `push` | 推送到注册表（布尔值） |
+| `tags` | 镜像标签（换行或逗号分隔） |
+| `labels` | 镜像元数据标签 |
+| `cache-from` | 缓存导入源（例如 `type=gha`、`type=registry,ref=image:cache`） |
+| `cache-to` | 缓存导出目标（例如 `type=gha,mode=max`） |
+| `build-args` | Docker 构建时变量 |
+| `file` | Dockerfile 路径（默认：`{context}/Dockerfile`） |
+| `platforms` | 目标平台（用于多架构构建） |
+| `provenance` | 构建出处证明模式 |
+| `sbom` | SBOM 生成模式 |
 
-**Cache backends:**
+**缓存后端：**
 
-| Backend | Type string | Best for |
+| 后端 | 类型字符串 | 最适合 |
 |---------|-------------|----------|
-| GitHub Actions Cache | `type=gha` | Same-repo caching (free) |
-| Inline (in image) | `type=inline` | Registry-backed caching |
-| Registry | `type=registry,ref=img:cache` | Cross-repo or cross-platform |
-| Local directory | `type=local` | Self-hosted runners with shared storage |
-| S3 | `type=s3` | AWS environments |
-| Azure Blob | `type=azblob` | Azure environments |
+| GitHub Actions 缓存 | `type=gha` | 同仓库缓存（免费） |
+| 内联（在镜像中） | `type=inline` | 基于注册表的缓存 |
+| 注册表 | `type=registry,ref=img:cache` | 跨仓库或跨平台 |
+| 本地目录 | `type=local` | 具有共享存储的自托管运行器 |
+| S3 | `type=s3` | AWS 环境 |
+| Azure Blob | `type=azblob` | Azure 环境 |
 
-**`mode=max` vs `mode=min`:**
-- `mode=max` (recommended for CI): Caches every layer created during the build. Produces the best cache hit rate but uses more cache storage.
-- `mode=min`: Caches only the final image layers (like a multi-stage build result). Uses less storage but may require rebuilding some layers on cache miss.
+**`mode=max` 与 `mode=min`：**
+- `mode=max`（推荐用于 CI）：缓存构建过程中创建的每一层。产生最佳缓存命中率，但使用更多缓存存储空间。
+- `mode=min`：仅缓存最终镜像层（类似于多阶段构建结果）。使用更少存储空间，但可能在缓存未命中时需要重建某些层。
 
-### Why This Approach
+### 为什么采用这种方式
 
-**Parallel execution with lint:** Since `docker-prepare` only needs `cache-calc` (not `deps-install`), it runs in parallel with `lint`. This means Docker layer caching happens while linting runs, with no additional wall-clock time.
+**与 lint 并行执行：** 由于 `docker-prepare` 只需要 `cache-calc`（而非 `deps-install`），它与 `lint` 并行运行。这意味着 Docker 层缓存在 lint 运行时进行，不增加实际耗时。
 
-**`push: false`:** We don't want to publish images from every CI run — that's what the deploy workflow is for. We just want to populate the layer cache so that the deploy workflow builds faster.
+**`push: false`：** 我们不想从每次 CI 运行发布镜像 — 那是部署工作流的工作。我们只想填充层缓存，以便部署工作流构建更快。
 
-**`type=gha` for cache:** GitHub Actions cache is free and scoped to the repository. It's the simplest cache backend for CI in GitHub Actions — no registry credentials needed.
+**使用 `type=gha` 进行缓存：** GitHub Actions 缓存免费且作用于仓库。它是 GitHub Actions 中最简单的 CI 缓存后端 — 无需注册表凭证。
 
-**`mode=max`:** We save all intermediate layers. This means even if only the last few layers change (e.g., app code), the base layers (OS packages, system deps) are reused from cache.
+**`mode=max`：** 我们保存所有中间层。这意味着即使只有最后几层发生变化（例如应用程序代码），基础层（操作系统包、系统依赖）也会从缓存中重用。
 
 ---
 
-## 10. Job 5: build
+## 10. 任务 5：build
 
 ### YAML
 
 ```yaml
 # =============================================================================
-# Job 5: build — TypeScript Compilation + Vite Bundling (Matrix)
+# 任务 5：build — TypeScript 编译 + Vite 打包（矩阵）
 # =============================================================================
-# Purpose: Compile TypeScript and bundle with Vite across 3 Node versions.
-# Uses dep cache from deps-install and build cache (dist/) to enable
-# incremental compilation where possible.
+# 目的：在 3 个 Node 版本上编译 TypeScript 并使用 Vite 打包。
+# 使用来自 deps-install 的依赖缓存和构建缓存（dist/）以在
+# 可能的情况下实现增量编译。
 #
-# Why matrix build:
-#   - Validates that the project compiles cleanly on all target Node versions
-#   - Produces version-specific dist/ artifacts for test-unit matrix
+# 为什么使用矩阵构建：
+#   - 验证项目在所有目标 Node 版本上都能干净编译
+#   - 为 test-unit 矩阵生成特定版本的 dist/ 构件
 # =============================================================================
 build:
   needs: deps-install
@@ -894,16 +894,16 @@ build:
       with:
         node-version: ${{ matrix.node }}
 
-    # Download pre-installed node_modules from the matching deps-install job
-    - name: Download node_modules
+    # 从匹配的 deps-install 任务下载预安装的 node_modules
+    - name: 下载 node_modules
       uses: actions/download-artifact@v4
       with:
         name: node_modules-${{ matrix.node }}
         path: node_modules
 
-    # Restore previously built dist/ from cache (if any)
-    # Vite/tsc can use this for persistent compilation cache
-    - name: Restore build cache
+    # 从缓存恢复先前构建的 dist/（如果有）
+    # Vite/tsc 可以将其用于持久编译缓存
+    - name: 恢复构建缓存
       id: build-cache-restore
       uses: actions/cache/restore@v4
       with:
@@ -912,13 +912,13 @@ build:
         restore-keys: |
           ${{ needs.cache-calc.outputs.build-key }}-
 
-    # npm run build compiles TypeScript and bundles with Vite
-    # (defined in package.json as: npm run build:web && tsc && cp -r ...)
-    - name: Build project
+    # npm run build 编译 TypeScript 并使用 Vite 打包
+    # （在 package.json 中定义为：npm run build:web && tsc && cp -r ...）
+    - name: 构建项目
       run: npm run build
 
-    # Upload dist/ for test-unit and test-integration jobs
-    - name: Upload dist artifact
+    # 为 test-unit 和 test-integration 任务上传 dist/
+    - name: 上传 dist 构件
       uses: actions/upload-artifact@v4
       with:
         name: dist-${{ matrix.node }}
@@ -926,76 +926,76 @@ build:
         retention-days: 3
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1-15 | `#` comments | Documentation header. |
-| 16 | `build:` | Job ID. |
-| 17 | `needs: deps-install` | Depends on `deps-install`. Does NOT depend on `lint` or `docker-prepare` — those run in parallel. |
-| 18 | `runs-on: ubuntu-latest` | Linux runner. |
-| 19-22 | Matrix `node: [18, 20, 22]` | Same 3-node matrix as `deps-install`. |
-| 24-25 | Checkout | Standard. |
-| 27-31 | Setup Node | No `cache: npm` needed (we download node_modules from artifact, don't run npm ci). |
-| 33-38 | Download `node_modules` | Downloads from the matching deps-install. The artifact name `node_modules-${{ matrix.node }}` ensures node 20 build gets node 20's node_modules. |
-| 40-48 | Build cache restore | Restores previously built `dist/` from cache if available. |
-| 44 | `key: ${{ needs.cache-calc.outputs.build-key }}-${{ matrix.node }}` | Build cache key. Chained: includes source file hash AND lockfile hash. If either source or deps changed, the key changes. |
-| 46 | `restore-keys: \| ${{ needs.cache-calc.outputs.build-key }}-` | Fallback: any previous build from the same source hash (any node version — useful for partial restore). |
-| 50-51 | Build | Runs `npm run build`. |
-| 53-58 | Upload `dist/` artifact | Uploads built output for downstream test jobs. |
+| 1-15 | `#` 注释 | 文档头部。 |
+| 16 | `build:` | 任务 ID。 |
+| 17 | `needs: deps-install` | 依赖于 `deps-install`。不依赖于 `lint` 或 `docker-prepare` — 它们并行运行。 |
+| 18 | `runs-on: ubuntu-latest` | Linux 运行器。 |
+| 19-22 | 矩阵 `node: [18, 20, 22]` | 与 `deps-install` 相同的 3 节点矩阵。 |
+| 24-25 | 检出 | 标准。 |
+| 27-31 | 设置 Node | 不需要 `cache: npm`（我们从构件下载 node_modules，不运行 npm ci）。 |
+| 33-38 | 下载 `node_modules` | 从匹配的 deps-install 下载。构件名称 `node_modules-${{ matrix.node }}` 确保 node 20 构建获取 node 20 的 node_modules。 |
+| 40-48 | 构建缓存恢复 | 从缓存恢复先前构建的 `dist/`（如果有）。 |
+| 44 | `key: ${{ needs.cache-calc.outputs.build-key }}-${{ matrix.node }}` | 构建缓存键。链式：包括源文件哈希和锁定文件哈希。如果源代码或依赖发生变化，键也会变化。 |
+| 46 | `restore-keys: \| ${{ needs.cache-calc.outputs.build-key }}-` | 后备键：来自相同源哈希的任何先前构建（任何 node 版本 — 对部分恢复有用）。 |
+| 50-51 | 构建 | 运行 `npm run build`。 |
+| 53-58 | 上传 `dist/` 构件 | 为下游测试任务上传构建输出。 |
 
-### Cache Key Chaining in Action
+### 缓存键链接实战
 
-The build key is `build-<source-hash>-<dep-hash>`. This means:
+构建键是 `build-<source-hash>-<dep-hash>`。这意味着：
 
 ```
-Scenario: Only source code changes
-  build-key: build-a1b2c-d4e5f → cache MISS (source hash changed)
-  restore-key: build-a1b2c- → partial hit from previous build with same source
-  → Build runs, some cache may be reused via tsc incremental
+场景：仅源代码发生变化
+  build-key: build-a1b2c-d4e5f → 缓存未命中（源哈希变化）
+  restore-key: build-a1b2c- → 从具有相同源的先前构建部分命中
+  → 构建运行，部分缓存可能通过 tsc 增量编译重用
 
-Scenario: Only dependencies change (package-lock.json)
-  build-key: build-a1b2c-d4e6f → cache MISS (dep hash changed due to lockfile)
-  Source hash a1b2c is the same, but dep hash changed
-  → Full rebuild needed (new deps may change compilation)
+场景：仅依赖发生变化（package-lock.json）
+  build-key: build-a1b2c-d4e6f → 缓存未命中（由于锁定文件，依赖哈希变化）
+  源哈希 a1b2c 相同，但依赖哈希变了
+  → 需要完整重建（新依赖可能改变编译结果）
 
-Scenario: Nothing changed
-  build-key: build-a1b2c-d4e5f → cache HIT
-  → Restore dist/ from cache, skip build entirely
-  → (If build step still runs, tsc incremental compilation is fast)
+场景：没有任何变化
+  build-key: build-a1b2c-d4e5f → 缓存命中
+  → 从缓存恢复 dist/，完全跳过构建
+  → （如果构建步骤仍然运行，tsc 增量编译很快）
 ```
 
-### Why Artifact vs Cache for `dist/`
+### 为什么 `dist/` 使用构件而不是缓存
 
-Both `dist/` and `node_modules/` use artifacts for same-run pass-through and cache for cross-run warming. The distinction:
+`dist/` 和 `node_modules/` 都在同一运行内传递使用构件，跨运行预热使用缓存。区别如下：
 
-| Mechanism | Use Case | Speed | Persistence |
+| 机制 | 使用场景 | 速度 | 持久性 |
 |-----------|----------|-------|-------------|
-| **Cache** | Cross-run (first CI on a branch) | Slower (key lookup) | Days (based on LRU eviction) |
-| **Artifact** | Same-run (current workflow) | Faster (direct download) | Configured by `retention-days` |
+| **缓存** | 跨运行（分支上的第一次 CI） | 较慢（键查找） | 数天（基于 LRU 淘汰） |
+| **构件** | 同一运行（当前工作流） | 更快（直接下载） | 由 `retention-days` 配置 |
 
-The `build` job's cache restore provides a cold-start benefit: if you push a branch and the first CI run finds a cache from a previous main build, `dist/` is restored in seconds. But within the current workflow run, `test-unit` and `test-integration` download `dist/` as an artifact.
+`build` 任务的缓存恢复提供了冷启动优势：如果你推送一个分支，并且第一次 CI 运行找到了来自先前 main 构建的缓存，`dist/` 在几秒钟内就能恢复。但在当前工作流运行内，`test-unit` 和 `test-integration` 将 `dist/` 作为构件下载。
 
 ---
 
-## 11. Job 6: test-unit
+## 11. 任务 6：test-unit
 
 ### YAML
 
 ```yaml
 # =============================================================================
-# Job 6: test-unit — Unit Tests with Matrix Sharding
+# 任务 6：test-unit — 带矩阵分片的单元测试
 # =============================================================================
-# Purpose: Run unit tests across 3 Node versions x 2 OS variants x 2 shards.
-# This is the most heavily parallelized job in the pipeline.
+# 目的：在 3 个 Node 版本 x 2 个操作系统变体 x 2 个分片上运行单元测试。
+# 这是管道中并行化程度最高的任务。
 #
-# Sharding strategy:
-#   - Vitest --shard=N/M splits test files across M shards
-#   - Total wall-clock time becomes max(shard_time), not sum(all_test_times)
-#   - With 2 shards across 6 (node x os) variants = up to 12 parallel runners
+# 分片策略：
+#   - Vitest --shard=N/M 将测试文件分配到 M 个分片上
+#   - 总实际耗时变为 max(shard_time)，而不是 sum(all_test_times)
+#   - 在 6（node x os）变体上使用 2 个分片 = 最多 12 个并行运行器
 #
-# fail-fast: false — one failing combination doesn't cancel others,
-# allowing us to see which combinations pass and which fail.
+# fail-fast: false — 一个失败组合不会取消其他组合，
+# 让我们看到哪些组合通过、哪些失败。
 # =============================================================================
 test-unit:
   needs: build
@@ -1004,14 +1004,14 @@ test-unit:
     matrix:
       node: [18, 20, 22]
       os: [ubuntu-latest, windows-latest]
-      # 2 shards per node+os combination = 2x coverage without 2x wall clock
+      # 每个 node+os 组合 2 个分片 = 2 倍覆盖而不增加 2 倍实际耗时
       shard: [1, 2]
-    # Exclude windows + node 18: reduces CI costs while still testing the
-    # most important combinations (win+20, win+22, all ubuntu combos)
+    # 排除 windows + node 18：降低 CI 成本，同时仍然测试
+    # 最重要的组合（win+20、win+22、所有 ubuntu 组合）
     exclude:
       - os: windows-latest
         node: 18
-    # Don't cancel all runners when one fails — we want signal from every combo
+    # 当某个运行器失败时不要取消所有运行器 — 我们需要每个组合的信号
     fail-fast: false
   steps:
     - uses: actions/checkout@v4
@@ -1020,28 +1020,28 @@ test-unit:
       with:
         node-version: ${{ matrix.node }}
 
-    # Download pre-built dist/ from the matching build job
-    - name: Download dist artifact
+    # 从匹配的构建任务下载预构建的 dist/
+    - name: 下载 dist 构件
       uses: actions/download-artifact@v4
       with:
         name: dist-${{ matrix.node }}
         path: dist
 
-    # node_modules is needed for test framework and type resolution
-    - name: Download node_modules
+    # 需要 node_modules 用于测试框架和类型解析
+    - name: 下载 node_modules
       uses: actions/download-artifact@v4
       with:
         name: node_modules-${{ matrix.node }}
         path: node_modules
 
-    # Vitest sharding: https://vitest.dev/guide/cli.html#shard
-    # --shard=1/2 runs the first half of test files
-    # --shard=2/2 runs the second half
-    - name: Run unit tests (shard ${{ matrix.shard }}/2)
+    # Vitest 分片：https://vitest.dev/guide/cli.html#shard
+    # --shard=1/2 运行前半部分测试文件
+    # --shard=2/2 运行后半部分
+    - name: 运行单元测试（分片 ${{ matrix.shard }}/2）
       run: npx vitest run --shard=${{ matrix.shard }}/2
 
-    # Upload test results even on failure (if: always()) for debugging
-    - name: Upload test results
+    # 即使失败也上传测试结果（if: always()）用于调试
+    - name: 上传测试结果
       if: always()
       uses: actions/upload-artifact@v4
       with:
@@ -1050,59 +1050,59 @@ test-unit:
         retention-days: 7
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1-18 | `#` comments | Documentation. |
-| 19 | `test-unit:` | Job ID. |
-| 20 | `needs: build` | Depends on the `build` job (ALL matrix variants of build must complete). |
-| 21 | `runs-on: ${{ matrix.os }}` | **Key:** The runner OS is controlled by the matrix. Jobs with `os: windows-latest` run on Windows; `os: ubuntu-latest` run on Linux. This tests cross-platform compatibility. |
-| 22-35 | `strategy:` block | Complex matrix with excludes. |
-| 24-28 | `matrix:` dimensions | Three dimensions: `node` (3 values), `os` (2 values), `shard` (2 values). Theoretical total: 3 × 2 × 2 = 12 combinations. |
-| 25 | `node: [18, 20, 22]` | Node versions. |
-| 26 | `os: [ubuntu-latest, windows-latest]` | Operating systems. |
-| 28 | `shard: [1, 2]` | Test shard indices. |
-| 30-31 | `exclude:` | Removes specific combinations from the matrix. |
-| 31 | `- os: windows-latest, node: 18` | Removes the (windows, node 18) combination — 2 shard values × 1 exclusion = 2 fewer jobs. |
-| 33-34 | `fail-fast: false` | **Critical:** When one matrix job fails, do NOT cancel the remaining in-progress jobs. Without this, a Node 18 failure would cancel the Node 22 job that's still running. |
+| 1-18 | `#` 注释 | 文档。 |
+| 19 | `test-unit:` | 任务 ID。 |
+| 20 | `needs: build` | 依赖于 `build` 任务（build 的所有矩阵变体必须完成）。 |
+| 21 | `runs-on: ${{ matrix.os }}` | **关键：** 运行器操作系统由矩阵控制。`os: windows-latest` 的任务在 Windows 上运行；`os: ubuntu-latest` 在 Linux 上运行。这测试了跨平台兼容性。 |
+| 22-35 | `strategy:` 块 | 带有排除的复杂矩阵。 |
+| 24-28 | `matrix:` 维度 | 三个维度：`node`（3 个值）、`os`（2 个值）、`shard`（2 个值）。理论总计：3 × 2 × 2 = 12 个组合。 |
+| 25 | `node: [18, 20, 22]` | Node 版本。 |
+| 26 | `os: [ubuntu-latest, windows-latest]` | 操作系统。 |
+| 28 | `shard: [1, 2]` | 测试分片索引。 |
+| 30-31 | `exclude:` | 从矩阵中移除特定组合。 |
+| 31 | `- os: windows-latest, node: 18` | 移除（windows, node 18）组合 — 2 个分片值 × 1 个排除 = 减少 2 个任务。 |
+| 33-34 | `fail-fast: false` | **关键：** 当一个矩阵任务失败时，不要取消其余正在进行的任务。没有这个设置，Node 18 失败会取消仍在运行的 Node 22 任务。 |
 
-#### How the Matrix Expands
+#### 矩阵如何展开
 
-Without exclude:
+不加排除：
 ```
 (18, ubuntu, 1)  (18, ubuntu, 2)  (18, windows, 1)  (18, windows, 2)
 (20, ubuntu, 1)  (20, ubuntu, 2)  (20, windows, 1)  (20, windows, 2)
 (22, ubuntu, 1)  (22, ubuntu, 2)  (22, windows, 1)  (22, windows, 2)
 ```
-= 12 jobs
+= 12 个任务
 
-With exclude `(windows, 18)`:
+带排除 `(windows, 18)`：
 ```
 (18, ubuntu, 1)  (18, ubuntu, 2)  ~~(18, windows, 1)~~  ~~(18, windows, 2)~~
 (20, ubuntu, 1)  (20, ubuntu, 2)  (20, windows, 1)  (20, windows, 2)
 (22, ubuntu, 1)  (22, ubuntu, 2)  (22, windows, 1)  (22, windows, 2)
 ```
-= 10 jobs
+= 10 个任务
 
-#### Steps
+#### 步骤
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 37-38 | Checkout | Standard. |
-| 40-44 | Setup Node | Uses `matrix.node`. |
-| 46-51 | Download `dist/` | Downloads from the matching build job. E.g., for `(node: 20, os: windows)`, downloads `dist-20`. |
-| 53-58 | Download `node_modules` | Downloads from `deps-install` for `matrix.node`. |
-| 60-63 | Vitest sharded run | Runs vitest in shard mode. |
-| 62 | `run: npx vitest run --shard=${{ matrix.shard }}/2` | Vitest splits test files into 2 groups. `--shard=1/2` runs the first half, `--shard=2/2` runs the second half. |
-| 65-72 | Upload results | Uploads test result files (JUnit XML, coverage, etc.) even if tests failed (`if: always()`). |
-| 67 | `if: always()` | This expression makes the step run regardless of the previous step's outcome. Without this, a test failure would skip the upload step. |
-| 69 | `name: test-results-${{ matrix.node }}-${{ matrix.os }}-shard${{ matrix.shard }}` | Unique artifact name per combination. Example: `test-results-20-windows-latest-shard1`. |
-| 71 | `retention-days: 7` | Longer retention for test results (you may want to review them after the 1-3 day CI artifact window expires). |
+| 37-38 | 检出 | 标准。 |
+| 40-44 | 设置 Node | 使用 `matrix.node`。 |
+| 46-51 | 下载 `dist/` | 从匹配的构建任务下载。例如，对于 `(node: 20, os: windows)`，下载 `dist-20`。 |
+| 53-58 | 下载 `node_modules` | 从 `deps-install` 为 `matrix.node` 下载。 |
+| 60-63 | Vitest 分片运行 | 以分片模式运行 vitest。 |
+| 62 | `run: npx vitest run --shard=${{ matrix.shard }}/2` | Vitest 将测试文件分成 2 组。`--shard=1/2` 运行前半部分，`--shard=2/2` 运行后半部分。 |
+| 65-72 | 上传结果 | 即使测试失败也上传测试结果文件（JUnit XML、覆盖率等）（`if: always()`）。 |
+| 67 | `if: always()` | 此表达式使步骤无论前一步骤的结果如何都运行。没有它，测试失败会跳过上传步骤。 |
+| 69 | `name: test-results-${{ matrix.node }}-${{ matrix.os }}-shard${{ matrix.shard }}` | 每个组合唯一的构件名称。示例：`test-results-20-windows-latest-shard1`。 |
+| 71 | `retention-days: 7` | 测试结果的较长保留期（你可能希望在 1-3 天的 CI 构件窗口过期后查看它们）。 |
 
-### Action Capability: Matrix Strategies
+### 动作能力：矩阵策略
 
-**Full `strategy` syntax:**
+**完整的 `strategy` 语法：**
 
 ```yaml
 strategy:
@@ -1111,16 +1111,16 @@ strategy:
     <dimension>: [<values>]
   include:
     - <dimension>: <value>
-      <extra-key>: <value>    # Adds extra variables to specific combinations
+      <extra-key>: <value>    # 向特定组合添加额外变量
   exclude:
-    - <dimension>: <value>    # Removes specific combinations
-  fail-fast: true|false       # Cancel all jobs when one fails (default: true)
-  max-parallel: <number>      # Limit concurrent matrix jobs (default: unlimited)
+    - <dimension>: <value>    # 移除特定组合
+  fail-fast: true|false       # 当一个任务失败时取消所有任务（默认：true）
+  max-parallel: <number>      # 限制并发矩阵任务数（默认：无限制）
 ```
 
-**`include` usage:**
+**`include` 的用法：**
 
-The `include` keyword adds custom combinations or adds extra variables to existing ones:
+`include` 关键字添加自定义组合或向现有组合添加额外变量：
 
 ```yaml
 strategy:
@@ -1130,103 +1130,103 @@ strategy:
   include:
     - node: 20
       os: windows
-      experimental: true    # Extra variable only for this combo
-    - node: 22              # Entirely new combination
+      experimental: true    # 仅此组合的额外变量
+    - node: 22              # 完全新的组合
       os: ubuntu
 ```
 
-**Key matrix concepts:**
-- Matrix jobs are FULLY INDEPENDENT — they run in separate runner instances
-- Each job has its own `${{ matrix.<dimension> }}` values
-- Matrix jobs all share the same `needs:` block
-- `fail-fast` is per-matrix-instance, not per-workflow
+**关键矩阵概念：**
+- 矩阵任务是完全独立的 — 它们在单独的运行器实例上运行
+- 每个任务有自己的 `${{ matrix.<dimension> }}` 值
+- 矩阵任务共享相同的 `needs:` 块
+- `fail-fast` 是每个矩阵实例的，不是每个工作流的
 
-### Action Capability: `if:` Conditional
+### 动作能力：`if:` 条件
 
-The `if:` keyword controls whether a step or job runs:
+`if:` 关键字控制步骤或任务是否运行：
 
 ```yaml
 if: <expression>
 ```
 
-**Common patterns:**
+**常见模式：**
 
-| Expression | Behavior |
+| 表达式 | 行为 |
 |------------|----------|
-| `always()` | Run regardless of previous step success/failure. Steps still fail if the runner is broken. |
-| `success()` | Run only if all previous steps succeeded (default behavior). |
-| `failure()` | Run only if a previous step failed. |
-| `cancelled()` | Run only if the workflow was cancelled. |
-| `github.ref == 'refs/heads/main'` | Only on main branch. |
-| `steps.my-step.outputs.cache-hit != 'true'` | Only on cache miss. |
+| `always()` | 无论前一步骤成功/失败都运行。如果运行器损坏，步骤仍然会失败。 |
+| `success()` | 仅当所有前一步骤都成功时运行（默认行为）。 |
+| `failure()` | 仅当之前步骤失败时运行。 |
+| `cancelled()` | 仅当工作流被取消时运行。 |
+| `github.ref == 'refs/heads/main'` | 仅在 main 分支上。 |
+| `steps.my-step.outputs.cache-hit != 'true'` | 仅在缓存未命中时。 |
 
-**Combining conditions:**
+**组合条件：**
 ```yaml
 if: always() && !cancelled()
 if: failure() || github.event_name == 'workflow_dispatch'
 ```
 
-### Why Sharding?
+### 为什么要分片？
 
-Without sharding, if you have 100 test files and 4 runners, the wall-clock time is the SUM of all test runtimes on one runner:
-
-```
-Test runtime without sharding: 10 minutes (all tests on one runner)
-```
-
-With 2 shards across each of 5 (node x os) combinations:
+没有分片时，如果你有 100 个测试文件和 4 个运行器，实际耗时是一个运行器上所有测试运行时间的总和：
 
 ```
-Shard 1: 50 test files → 5 minutes
-Shard 2: 50 test files → 5 minutes
-Wall clock: 5 minutes (half the time)
+不进行分片的测试运行时间：10 分钟（所有测试在一个运行器上）
 ```
 
-Sharding is beneficial when:
-- You have many test files (>100)
-- Tests are CPU-bound, not I/O-bound
-- You have available CI parallelism
-- Test suite runtime is a bottleneck in your pipeline
+在 5 个（node x os）组合的每个上使用 2 个分片：
 
-### Why `fail-fast: false`?
-
-**Without `fail-fast: false` (default `true`):**
 ```
-Job (18, windows) fails
-→ All other 9 jobs are cancelled immediately
-→ You only know that (18, windows) failed
-→ You have no signal on (20, ubuntu), (22, windows), etc.
+分片 1：50 个测试文件 → 5 分钟
+分片 2：50 个测试文件 → 5 分钟
+实际耗时：5 分钟（一半时间）
 ```
 
-**With `fail-fast: false`:**
+分片在以下情况下有益：
+- 你有许多测试文件（>100）
+- 测试受 CPU 限制，而非 I/O 限制
+- 你有可用的 CI 并行性
+- 测试套件运行时间是管道中的瓶颈
+
+### 为什么使用 `fail-fast: false`？
+
+**不使用 `fail-fast: false`（默认 `true`）：**
 ```
-Job (18, windows) fails
-→ Other 9 jobs continue running
-→ You see results for ALL combinations
-→ Node 20 passes on both OS, Node 22 passes on Linux but fails on Windows
+任务 (18, windows) 失败
+→ 所有其他 9 个任务被立即取消
+→ 你只知道 (18, windows) 失败了
+→ 你对 (20, ubuntu)、(22, windows) 等没有信号
 ```
 
-For CI, `fail-fast: false` is usually better. The extra CI minutes spent running to completion are worth the comprehensive signal. Use `fail-fast: true` only when CI minutes are scarce and speed is critical.
+**使用 `fail-fast: false`：**
+```
+任务 (18, windows) 失败
+→ 其他 9 个任务继续运行
+→ 你看到所有组合的结果
+→ Node 20 在两个操作系统上通过，Node 22 在 Linux 上通过但在 Windows 上失败
+```
+
+对于 CI，`fail-fast: false` 通常更好。额外花费的 CI 分钟数运行到完成，换来的全面信号是值得的。仅在 CI 分钟数稀缺且速度至关重要时使用 `fail-fast: true`。
 
 ---
 
-## 12. Job 7: test-integration
+## 12. 任务 7：test-integration
 
 ### YAML
 
 ```yaml
 # =============================================================================
-# Job 7: test-integration — Integration Tests with Docker Compose
+# 任务 7：test-integration — 使用 Docker Compose 的集成测试
 # =============================================================================
-# Purpose: Spin up the full service stack via Docker Compose and run
-# integration tests against it. This validates that the build artifact
-# works correctly in a containerized environment with real dependencies.
+# 目的：通过 Docker Compose 启动完整的服务栈并运行
+# 集成测试。这验证构建构件在容器化环境中
+# 与真实依赖一起正确工作。
 #
-# Key design:
-#   - Uses the node 20 dist/ artifact (one representative version)
-#   - Docker Compose controls service lifecycle
-#   - Container logs are collected on failure for debugging
-#   - Teardown always runs (if: always()) to prevent resource leaks
+# 关键设计：
+#   - 使用 node 20 的 dist/ 构件（一个代表性版本）
+#   - Docker Compose 控制服务生命周期
+#   - 失败时收集容器日志用于调试
+#   - 清理始终运行（if: always()）以防止资源泄漏
 # =============================================================================
 test-integration:
   needs: build
@@ -1238,113 +1238,113 @@ test-integration:
       with:
         node-version: ${{ env.NODE_VERSION }}
 
-    # Download pre-built dist/ (node 20) and matching node_modules
-    - name: Download dist artifact
+    # 下载预构建的 dist/（node 20）和匹配的 node_modules
+    - name: 下载 dist 构件
       uses: actions/download-artifact@v4
       with:
         name: dist-${{ env.NODE_VERSION }}
         path: dist
 
-    - name: Download node_modules
+    - name: 下载 node_modules
       uses: actions/download-artifact@v4
       with:
         name: node_modules-${{ env.NODE_VERSION }}
         path: node_modules
 
-    # Start all services defined in docker-compose.yml
-    # --wait: wait for health checks to pass before proceeding
-    # --wait-timeout: maximum seconds to wait for services to become healthy
-    - name: Start Docker Compose services
+    # 启动 docker-compose.yml 中定义的所有服务
+    # --wait：等待健康检查通过后再继续
+    # --wait-timeout：等待服务变为健康的最大秒数
+    - name: 启动 Docker Compose 服务
       run: docker compose up -d --wait --wait-timeout 60
 
-    # Integration test command (defined in package.json — create if not present)
-    - name: Run integration tests
-      run: npx vitest run --config vitest.integration.config.ts 2>/dev/null || npm run test:integration 2>/dev/null || echo "No integration tests configured yet"
+    # 集成测试命令（在 package.json 中定义 — 如不存在则创建）
+    - name: 运行集成测试
+      run: npx vitest run --config vitest.integration.config.ts 2>/dev/null || npm run test:integration 2>/dev/null || echo "尚未配置集成测试"
 
-    # Collect logs from all containers for debugging test failures
-    - name: Collect container logs
+    # 从所有容器收集日志用于调试测试失败
+    - name: 收集容器日志
       if: failure()
       run: docker compose logs --tail=100
 
-    # Always tear down, regardless of test outcome
-    - name: Teardown Docker Compose
+    # 无论测试结果如何，始终进行清理
+    - name: 清理 Docker Compose
       if: always()
       run: docker compose down -v --remove-orphans
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1-16 | `#` comments | Documentation header. |
-| 17 | `test-integration:` | Job ID. |
-| 18 | `needs: build` | Depends on the `build` job (waits for all matrix variants). |
-| 19 | `runs-on: ubuntu-latest` | Docker is only available on Linux runners. |
-| 21-22 | Checkout | Standard. |
-| 24-28 | Setup Node | Uses the default `NODE_VERSION` (20). |
-| 30-35 | Download `dist/` | Downloads `dist-20` artifact. |
-| 37-41 | Download `node_modules` | Downloads `node_modules-20` artifact. |
-| 43-46 | Docker Compose start | |
-| 45 | `docker compose up -d --wait --wait-timeout 60` | `-d`: detached mode (run in background). `--wait`: wait for all services to pass health checks before proceeding. `--wait-timeout 60`: fail if services aren't healthy within 60 seconds. |
-| 48-50 | Integration tests | Runs integration tests. Uses `\|\|` fallbacks for graceful handling if the integration test config doesn't exist yet. |
-| 49 | Command explanation: | Tries vitest with integration config first, falls back to `test:integration` npm script, then gracefully prints a message if neither exists. |
-| 52-55 | Collect logs on failure | |
-| 53 | `if: failure()` | Only runs if a previous step failed. |
-| 54 | `docker compose logs --tail=100` | Prints the last 100 lines of each container's log. |
-| 57-60 | Teardown | |
-| 58 | `if: always()` | Runs even if tests failed. This is critical for cleanup. |
-| 59 | `docker compose down -v --remove-orphans` | `down`: stop and remove containers. `-v`: remove volumes. `--remove-orphans`: clean up containers not defined in the compose file. |
+| 1-16 | `#` 注释 | 文档头部。 |
+| 17 | `test-integration:` | 任务 ID。 |
+| 18 | `needs: build` | 依赖于 `build` 任务（等待所有矩阵变体）。 |
+| 19 | `runs-on: ubuntu-latest` | Docker 仅在 Linux 运行器上可用。 |
+| 21-22 | 检出 | 标准。 |
+| 24-28 | 设置 Node | 使用默认的 `NODE_VERSION`（20）。 |
+| 30-35 | 下载 `dist/` | 下载 `dist-20` 构件。 |
+| 37-41 | 下载 `node_modules` | 下载 `node_modules-20` 构件。 |
+| 43-46 | Docker Compose 启动 | |
+| 45 | `docker compose up -d --wait --wait-timeout 60` | `-d`：分离模式（后台运行）。`--wait`：等待所有服务通过健康检查后再继续。`--wait-timeout 60`：如果服务在 60 秒内未变为健康状态则失败。 |
+| 48-50 | 集成测试 | 运行集成测试。使用 `\|\|` 后备以在集成测试配置尚不存在时优雅处理。 |
+| 49 | 命令说明： | 首先尝试 vitest 与集成配置，回退到 `test:integration` npm 脚本，然后如果两者都不存在则优雅地打印消息。 |
+| 52-55 | 失败时收集日志 | |
+| 53 | `if: failure()` | 仅当之前步骤失败时运行。 |
+| 54 | `docker compose logs --tail=100` | 打印每个容器日志的最后 100 行。 |
+| 57-60 | 清理 | |
+| 58 | `if: always()` | 即使测试失败也运行。这对清理至关重要。 |
+| 59 | `docker compose down -v --remove-orphans` | `down`：停止并移除容器。`-v`：移除卷。`--remove-orphans`：清理 compose 文件中未定义的容器。 |
 
-### Docker Compose Lifecycle Management
+### Docker Compose 生命周期管理
 
-The standard pattern for integration tests with Docker Compose:
+使用 Docker Compose 进行集成测试的标准模式：
 
 ```
-           [start]                    [failure]              [always]
-  Checkout ──> docker compose up ──> test run ──> collect logs ──> docker compose down
+           [启动]                    [失败]              [始终]
+  检出 ──> docker compose up ──> 测试运行 ──> 收集日志 ──> docker compose down
                      │                                             ↑
-                     └────── wait for health ──────────────────────┘
+                     └────── 等待健康检查 ──────────────────────────┘
 ```
 
-**Why `--wait` matters:** Without `--wait`, `docker compose up -d` returns immediately, and the next step (tests) might run before the database is accepting connections. The health check ensures:
+**为什么 `--wait` 很重要：** 没有 `--wait`，`docker compose up -d` 立即返回，下一步骤（测试）可能在数据库接受连接之前运行。健康检查确保：
 
-1. Container is running
-2. Internal process is ready (e.g., PostgreSQL accepts connections)
-3. Application responds to health endpoints
+1. 容器正在运行
+2. 内部进程已就绪（例如 PostgreSQL 接受连接）
+3. 应用程序响应健康端点
 
-**Why `if: always()` for teardown:** If tests fail and the runner doesn't tear down Docker, resources leak. On GitHub Actions hosted runners, the entire VM is destroyed after the job, so leaks aren't permanent, but:
-- Running containers consume disk space
-- Running containers may hold ports
-- Volumes take up space that could be used for artifact downloads
+**为什么清理用 `if: always()`：** 如果测试失败且运行器没有清理 Docker，资源会泄漏。在 GitHub Actions 托管运行器上，整个 VM 在任务后被销毁，因此泄漏不是永久的，但是：
+- 运行中的容器消耗磁盘空间
+- 运行中的容器可能占用端口
+- 卷占用空间，这些空间本可用于构件下载
 
-**Why `--remove-orphans`:** If the workflow run is a retry, there might be leftover containers from previous runs with different service configurations.
+**为什么使用 `--remove-orphans`：** 如果工作流运行是重试，可能存在来自具有不同服务配置的先前运行的遗留容器。
 
-### Why Single Node for Integration Tests?
+### 为什么集成测试使用单节点？
 
-Integration tests validate BEHAVIOR, not runtime compatibility. The core logic should behave identically across Node versions. Running integration tests on one representative version (20 LTS) is sufficient, and the unit test matrix already covers Node version-specific issues.
+集成测试验证的是**行为**，而非运行时兼容性。核心逻辑在不同 Node 版本上应该表现一致。在一个代表性版本（20 LTS）上运行集成测试就足够了，而单元测试矩阵已经覆盖了 Node 版本特定问题。
 
 ---
 
-## 13. Job 8: cache-warm
+## 13. 任务 8：cache-warm
 
 ### YAML
 
 ```yaml
 # =============================================================================
-# Job 8: cache-warm — Prime Caches for Future Runs (main branch only)
+# 任务 8：cache-warm — 为将来运行预热缓存（仅 main 分支）
 # =============================================================================
-# Purpose: After a successful build on main, explicitly save all cache layers.
-# This ensures PR branches based on main get full cache hits, even if the
-# previous main run's caches expired or were evicted.
+# 目的：在 main 上成功构建后，显式保存所有缓存层。
+# 这确保基于 main 的 PR 分支获得完整的缓存命中，即使
+# 之前的 main 运行缓存已过期或被淘汰。
 #
-# Why explicit save:
-#   - actions/cache only saves on cache miss (post-action). If main ran with
-#     a cache hit, the post-action skip means no new cache entry is written.
-#   - cache-warm guarantees fresh cache entries after every main merge.
-#   - Running `npm ci` here creates the exact expected node_modules to cache.
+# 为什么显式保存：
+#   - actions/cache 仅在缓存未命中时保存（后操作）。如果 main 运行
+#     时缓存命中，后操作跳过意味着没有写入新的缓存条目。
+#   - cache-warm 保证每次 main 合并后都有新鲜的缓存条目。
+#   - 在此运行 `npm ci` 创建了要缓存的精确预期 node_modules。
 #
-# Condition: github.ref == 'refs/heads/main' ensures this only runs on main,
-# not on PR or dev branches (where it would waste CI minutes).
+# 条件：github.ref == 'refs/heads/main' 确保这仅在 main 上运行，
+# 不在 PR 或 dev 分支上运行（在这些分支上会浪费 CI 分钟数）。
 # =============================================================================
 cache-warm:
   if: github.ref == 'refs/heads/main'
@@ -1358,163 +1358,163 @@ cache-warm:
         node-version: ${{ env.NODE_VERSION }}
         cache: npm
 
-    # Fresh npm ci to produce node_modules that exactly matches the lockfile
-    - name: Install dependencies
+    # 新鲜的 npm ci 以生成与锁定文件精确匹配的 node_modules
+    - name: 安装依赖
       run: npm ci
 
-    # Explicitly save node_modules cache with the exact dep-key
-    # This overwrites any stale cache entry with the same key
-    - name: Prime dependency cache
+    # 使用精确的 dep-key 显式保存 node_modules 缓存
+    # 这会覆盖具有相同键的任何过期缓存条目
+    - name: 预热依赖缓存
       uses: actions/cache/save@v4
       with:
         path: node_modules
         key: ${{ needs.cache-calc.outputs.dep-key }}-${{ env.NODE_VERSION }}
 
-    # Also prime the build cache by running the build and saving dist/
-    - name: Build project
+    # 通过运行构建并保存 dist/ 来预热构建缓存
+    - name: 构建项目
       run: npm run build
 
-    - name: Prime build cache
+    - name: 预热构建缓存
       uses: actions/cache/save@v4
       with:
         path: dist
         key: ${{ needs.cache-calc.outputs.build-key }}-${{ env.NODE_VERSION }}
 ```
 
-### Line-by-Line Explanation
+### 逐行说明
 
-| Line | Element | Explanation |
+| 行号 | 元素 | 说明 |
 |------|---------|-------------|
-| 1-18 | `#` comments | Documentation explaining the purpose and design rationale. |
-| 19 | `cache-warm:` | Job ID. |
-| 20 | `if: github.ref == 'refs/heads/main'` | **Job-level condition.** If the expression evaluates to `false`, the ENTIRE JOB is skipped (shows as "skipped" in the UI, not "failed"). The condition checks whether the current ref is the main branch. |
-| 21 | `needs: [cache-calc, test-unit, test-integration]` | Depends on THREE jobs (array syntax). Cache-warming only happens after ALL tests pass on main. `cache-calc` is included because we reference `needs.cache-calc.outputs.*`. |
-| 22 | `runs-on: ubuntu-latest` | Linux runner. |
-| 24-25 | Checkout | Standard. |
-| 27-31 | Setup Node with `cache: npm` | Here we DO use `cache: npm` because we're running `npm ci` from scratch. |
-| 33-34 | `npm ci` | Fresh install to produce the exact `node_modules/` we want to cache. |
-| 36-41 | Save dep cache | |
-| 38 | `uses: actions/cache/save@v4` | The save-only sub-action. Unlike the full `actions/cache` (which saves as a post-action), this saves IMMEDIATELY. |
-| 40 | `key: ${{ needs.cache-calc.outputs.dep-key }}-${{ env.NODE_VERSION }}` | The exact key that future PR runs will look up. By saving this explicitly on main, we guarantee the cache exists for the next PR. |
-| 43-44 | `npm run build` | Run the build to produce `dist/`. |
-| 46-51 | Save build cache | Same pattern: explicitly save `dist/` with the build key. |
+| 1-18 | `#` 注释 | 解释目的和设计原理的文档。 |
+| 19 | `cache-warm:` | 任务 ID。 |
+| 20 | `if: github.ref == 'refs/heads/main'` | **任务级条件。** 如果表达式计算结果为 `false`，整个任务被跳过（在 UI 中显示为"已跳过"，而非"失败"）。该条件检查当前引用是否为 main 分支。 |
+| 21 | `needs: [cache-calc, test-unit, test-integration]` | 依赖于三个任务（数组语法）。缓存预热仅在所有测试在 main 上通过后进行。包含 `cache-calc` 是因为我们引用了 `needs.cache-calc.outputs.*`。 |
+| 22 | `runs-on: ubuntu-latest` | Linux 运行器。 |
+| 24-25 | 检出 | 标准。 |
+| 27-31 | 使用 `cache: npm` 设置 Node | 这里我们确实使用 `cache: npm`，因为我们从头运行 `npm ci`。 |
+| 33-34 | `npm ci` | 全新安装以生成我们要缓存的精确 `node_modules/`。 |
+| 36-41 | 保存依赖缓存 | |
+| 38 | `uses: actions/cache/save@v4` | 仅保存子操作。与完整的 `actions/cache`（作为后操作保存）不同，这会**立即**保存。 |
+| 40 | `key: ${{ needs.cache-calc.outputs.dep-key }}-${{ env.NODE_VERSION }}` | 将来 PR 运行将查找的精确键。通过在 main 上显式保存，我们保证下一个 PR 的缓存存在。 |
+| 43-44 | `npm run build` | 运行构建以生成 `dist/`。 |
+| 46-51 | 保存构建缓存 | 相同模式：使用构建键显式保存 `dist/`。 |
 
-### Action Capability: `actions/cache/save@v4`
+### 动作能力：`actions/cache/save@v4`
 
-**Purpose:** Explicitly save a cache entry immediately (not as a post-action).
+**目的：** 立即显式保存缓存条目（不作为后操作）。
 
-**Key inputs:**
+**关键输入：**
 
-| Input | Required | Description |
+| 输入 | 必需 | 描述 |
 |-------|----------|-------------|
-| `path` | Yes | Directory/file to cache |
-| `key` | Yes | Cache key (must be unique) |
-| `upload-chunk-size` | No | Chunk size for large cache uploads |
+| `path` | 是 | 要缓存的目录/文件 |
+| `key` | 是 | 缓存键（必须唯一） |
+| `upload-chunk-size` | 否 | 大型缓存上传的块大小 |
 
-**Constraints:**
-- Maximum cache size per entry: ~10 GB (varies by plan)
-- Maximum number of entries: no hard limit, but LRU eviction applies
-- Keys must be unique per entry (new save with existing key overwrites)
-- Cache entries expire after 7 days of no access (adjustable by GitHub support)
+**约束：**
+- 每个条目的最大缓存大小：约 10 GB（因套餐而异）
+- 最大条目数：无硬性限制，但适用 LRU 淘汰
+- 每个条目的键必须唯一（使用现有键的新保存会覆盖）
+- 缓存条目在无访问 7 天后过期（可由 GitHub 支持调整）
 
-### `actions/cache/save` vs Post-Action Save
+### `actions/cache/save` 与后操作保存对比
 
-The full `actions/cache` action has two phases:
+完整的 `actions/cache` 操作有两个阶段：
 
-1. **Pre-action (restore):** Runs BEFORE the step that uses `actions/cache`. Restores cache if key matches.
-2. **Post-action (save):** Runs AFTER the job completes. Saves the cache ONLY if the key was new (not a cache hit).
+1. **前操作（恢复）：** 在使用 `actions/cache` 的步骤之前运行。如果键匹配，恢复缓存。
+2. **后操作（保存）：** 在任务完成后运行。仅当键是新的（不是缓存命中）时保存缓存。
 
-**The problem this creates:**
-
-```
-Run 1 (main, cache MISS):
-  Step: actions/cache → restore: miss
-  Step: npm ci → creates node_modules
-  Post-action: cache/save → saves node_modules with key X
-  → Cache entry X exists ✓
-
-Run 2 (main, cache HIT — same commit re-run):
-  Step: actions/cache → restore: hit → node_modules restored
-  Step: npm ci → verifies (fast, no changes)
-  Post-action: cache/save → SKIPS (was a cache hit)
-  → Cache entry X still exists, but with original TTL ✓
-
-Run 3 (main, cache miss after cache eviction 8 days later):
-  Step: actions/cache → restore: miss (entry X was evicted)
-  Step: npm ci → installs from scratch
-  Post-action: cache/save → saves new entry X
-  → Works, but slow for the first PR after eviction ✗
-```
-
-**The `cache-warm` fix:**
+**这造成的问题：**
 
 ```
-Run N (main):
-  → cache-warm job runs
-  → actions/cache/save with key X → overwrites/creates entry
-  → Cache entry X is fresh with new TTL
+运行 1（main，缓存未命中）：
+  步骤：actions/cache → 恢复：未命中
+  步骤：npm ci → 创建 node_modules
+  后操作：cache/save → 使用键 X 保存 node_modules
+  → 缓存条目 X 存在 ✓
+
+运行 2（main，缓存命中 — 相同提交重新运行）：
+  步骤：actions/cache → 恢复：命中 → node_modules 恢复
+  步骤：npm ci → 验证（快速，无变化）
+  后操作：cache/save → 跳过（是缓存命中）
+  → 缓存条目 X 仍然存在，但使用原始 TTL ✓
+
+运行 3（main，8 天后缓存淘汰后缓存未命中）：
+  步骤：actions/cache → 恢复：未命中（条目 X 被淘汰）
+  步骤：npm ci → 从头安装
+  后操作：cache/save → 保存新条目 X
+  → 可以工作，但淘汰后的第一个 PR 很慢 ✗
+```
+
+**`cache-warm` 的修复：**
+
+```
+运行 N（main）：
+  → cache-warm 任务运行
+  → actions/cache/save 使用键 X → 覆盖/创建条目
+  → 缓存条目 X 是新鲜的，具有新的 TTL
   
-Run N+1 (PR branch based on main):
-  → deps-install looks up key X → HIT
-  → node_modules restored in seconds ✓
+运行 N+1（基于 main 的 PR 分支）：
+  → deps-install 查找键 X → 命中
+  → node_modules 在几秒内恢复 ✓
 ```
 
-### Action Capability: `if:` on Jobs vs Steps
+### 动作能力：任务级与步骤级的 `if:`
 
-**Job-level `if:`:**
+**任务级 `if:`：**
 ```yaml
 jobs:
   my-job:
     if: <condition>
     ...
 ```
-- Controls whether the ENTIRE job runs
-- If `false`, the job shows as "skipped" in the UI
-- All job dependencies (`needs:`) must still complete (or be skipped)
-- Expressions can reference `github`, `env`, `needs`, etc.
+- 控制整个任务是否运行
+- 如果为 `false`，任务在 UI 中显示为"已跳过"
+- 所有任务依赖（`needs:`）仍需完成（或被跳过）
+- 表达式可以引用 `github`、`env`、`needs` 等
 
-**Step-level `if:`:**
+**步骤级 `if:`：**
 ```yaml
 steps:
   - name: My step
     if: <condition>
     ...
 ```
-- Controls whether a single step runs
-- If `false`, the step is skipped but subsequent steps still run
-- `if: always()` overrides failure status
+- 控制单个步骤是否运行
+- 如果为 `false`，步骤被跳过但后续步骤仍然运行
+- `if: always()` 覆盖失败状态
 
-### Why This Pattern Matters
+### 为什么这个模式很重要
 
-Without `cache-warm`, the cache on main branch degrades over time:
-
-```
-Day 1: Cache entry created (good)
-Day 7: Cache entry expires (LRU eviction or TTL)
-Day 8: First PR → cache miss → slow npm ci → slow pipeline
-```
-
-With `cache-warm`, every successful main merge refreshes the cache:
+没有 `cache-warm`，main 分支上的缓存会随时间退化：
 
 ```
-Day 1: Cache entry created
-Day 2: Merge to main → cache-warm → entry refreshed
-Day 7: Merge to main → cache-warm → entry refreshed (never expires)
-Day 8: First PR → cache HIT → fast pipeline
+第 1 天：缓存条目创建（良好）
+第 7 天：缓存条目过期（LRU 淘汰或 TTL）
+第 8 天：第一个 PR → 缓存未命中 → 慢 npm ci → 慢管道
 ```
 
-This is especially important for repositories with periodic but not continuous CI activity.
+有了 `cache-warm`，每次成功的 main 合并都会刷新缓存：
+
+```
+第 1 天：缓存条目创建
+第 2 天：合并到 main → cache-warm → 条目刷新
+第 7 天：合并到 main → cache-warm → 条目刷新（永不过期）
+第 8 天：第一个 PR → 缓存命中 → 快速管道
+```
+
+这对于具有定期但非连续 CI 活动的仓库尤其重要。
 
 ---
 
-## 14. Expression Syntax and Context Objects
+## 14. 表达式语法和上下文对象
 
-### The `${{ }}` Expression Delimiter
+### `${{ }}` 表达式分隔符
 
-GitHub Actions expressions are enclosed in `${{ }}`. The expression parser evaluates these before the workflow run begins.
+GitHub Actions 表达式用 `${{ }}` 括起来。表达式解析器在工作流运行开始前计算这些值。
 
 ```yaml
-# Examples throughout the workflow:
+# 工作流中的示例：
 ${{ hashFiles('package-lock.json') }}
 ${{ runner.os }}
 ${{ matrix.node }}
@@ -1525,120 +1525,120 @@ ${{ env.NODE_VERSION }}
 ${{ matrix.os }}
 ```
 
-**Rules:**
-- Expressions can appear in ANY workflow field (not just `run:`)
-- Expression results are automatically converted to strings
-- If an expression is used in a `run:` command, it's evaluated server-side and the result is embedded in the shell command
-- Literal `$` must be escaped as `$$` or `${{ '#' }}` depending on context
+**规则：**
+- 表达式可以出现在任何工作流字段中（不仅仅是 `run:`）
+- 表达式结果自动转换为字符串
+- 如果在 `run:` 命令中使用表达式，它在服务端计算，结果嵌入到 shell 命令中
+- 字面量 `$` 必须根据上下文转义为 `$$` 或 `${{ '#' }}`
 
-### Available Context Objects
+### 可用的上下文对象
 
-| Context | Description | Common Properties |
+| 上下文 | 描述 | 常用属性 |
 |---------|-------------|-------------------|
-| `github` | Information about the workflow run and event | `github.ref`, `github.sha`, `github.repository`, `github.actor`, `github.event_name`, `github.workflow`, `github.run_id`, `github.run_number` |
-| `env` | Environment variables defined in workflow/job/step | `env.MY_VAR` |
-| `runner` | Information about the runner | `runner.os`, `runner.arch`, `runner.name`, `runner.temp` |
-| `matrix` | Current matrix values | `matrix.node`, `matrix.os`, `matrix.shard` |
-| `needs` | Outputs from dependent jobs | `needs.cache-calc.outputs.dep-key` |
-| `steps` | Outputs from previous steps | `steps.my-step.outputs.cache-hit` |
-| `secrets` | Repository/organization secrets | `secrets.GITHUB_TOKEN` |
-| `inputs` | Workflow dispatch inputs | `inputs.my-input` |
-| `strategy` | Matrix strategy info | `strategy.job-index`, `strategy.job-total`, `strategy.max-parallel` |
+| `github` | 关于工作流运行和事件的信息 | `github.ref`、`github.sha`、`github.repository`、`github.actor`、`github.event_name`、`github.workflow`、`github.run_id`、`github.run_number` |
+| `env` | 在工作流/任务/步骤中定义的环境变量 | `env.MY_VAR` |
+| `runner` | 关于运行器的信息 | `runner.os`、`runner.arch`、`runner.name`、`runner.temp` |
+| `matrix` | 当前矩阵值 | `matrix.node`、`matrix.os`、`matrix.shard` |
+| `needs` | 来自依赖任务的输出 | `needs.cache-calc.outputs.dep-key` |
+| `steps` | 来自先前步骤的输出 | `steps.my-step.outputs.cache-hit` |
+| `secrets` | 仓库/组织密钥 | `secrets.GITHUB_TOKEN` |
+| `inputs` | 工作流调度输入 | `inputs.my-input` |
+| `strategy` | 矩阵策略信息 | `strategy.job-index`、`strategy.job-total`、`strategy.max-parallel` |
 
-### Functions Available in Expressions
+### 表达式中可用的函数
 
-| Function | Description | Example |
+| 函数 | 描述 | 示例 |
 |----------|-------------|---------|
-| `hashFiles()` | SHA-256 hash of file contents | `hashFiles('package.json')` |
-| `contains()` | Check if string/array contains value | `contains('hello', 'ell')` |
-| `startsWith()` | Check if string starts with value | `startsWith(github.ref, 'refs/heads/')` |
-| `endsWith()` | Check if string ends with value | `endsWith(github.ref, '/main')` |
-| `format()` | String formatting | `format('{0} {1}', 'hello', 'world')` |
-| `join()` | Join array with separator | `join(github.commits, ', ')` |
-| `toJSON()` | Pretty-print JSON | `toJSON(github)` |
-| `fromJSON()` | Parse JSON string | `fromJSON(inputs.my-json)` |
-| `success()` | Did all previous steps succeed? | `success()` |
-| `failure()` | Did any previous step fail? | `failure()` |
-| `cancelled()` | Was the workflow cancelled? | `cancelled()` |
-| `always()` | Always true | `always()` |
+| `hashFiles()` | 文件内容的 SHA-256 哈希 | `hashFiles('package.json')` |
+| `contains()` | 检查字符串/数组是否包含值 | `contains('hello', 'ell')` |
+| `startsWith()` | 检查字符串是否以值开头 | `startsWith(github.ref, 'refs/heads/')` |
+| `endsWith()` | 检查字符串是否以值结尾 | `endsWith(github.ref, '/main')` |
+| `format()` | 字符串格式化 | `format('{0} {1}', 'hello', 'world')` |
+| `join()` | 使用分隔符连接数组 | `join(github.commits, ', ')` |
+| `toJSON()` | 美化打印 JSON | `toJSON(github)` |
+| `fromJSON()` | 解析 JSON 字符串 | `fromJSON(inputs.my-json)` |
+| `success()` | 所有前面的步骤是否都成功了？ | `success()` |
+| `failure()` | 是否有前面的步骤失败了？ | `failure()` |
+| `cancelled()` | 工作流是否被取消？ | `cancelled()` |
+| `always()` | 始终为 true | `always()` |
 
-### Operator Precedence and Type Coercion
+### 运算符优先级和类型强制
 
-Expressions support:
-- **Comparison:** `==`, `!=`, `<`, `>`, `<=`, `>=`
-- **Boolean:** `&&`, `||`, `!`
-- **Ternary:** `condition ? true-value : false-value`
-- **Null-coalescing:** `value ?? default-value`
+表达式支持：
+- **比较：** `==`、`!=`、`<`、`>`、`<=`、`>=`
+- **布尔：** `&&`、`||`、`!`
+- **三元：** `condition ? true-value : false-value`
+- **空值合并：** `value ?? default-value`
 
-**Type coercion rules:**
+**类型强制规则：**
 
 ```yaml
-# String comparison (default — most values in GitHub Actions are strings)
+# 字符串比较（默认 — GitHub Actions 中的大多数值都是字符串）
 'false' == 'true'   → false
-'false' == false    → false (string != boolean)
+'false' == false    → false（字符串 != 布尔值）
 
-# Boolean comparison (use `true`/`false` without quotes)
+# 布尔比较（使用不带引号的 `true`/`false`）
 true && false       → false
 true || false       → true
 
-# In conditions, unquoted strings are treated as literal values
-if: true            → runs
-if: false           → skipped
-if: 'true'          → ERROR (string not allowed in if:)
+# 在条件中，不带引号的字符串被视为字面量值
+if: true            → 运行
+if: false           → 跳过
+if: 'true'          → 错误（if: 中不允许使用字符串）
 ```
 
-**Important:** In `if:` blocks, you must use unquoted booleans:
+**重要说明：** 在 `if:` 块中，必须使用不带引号的布尔值：
 ```yaml
-# CORRECT
+# 正确
 if: true
 if: false
 if: success()
 
-# INCORRECT
-if: 'true'   # treated as a string, which is truthy → always runs!
+# 错误
+if: 'true'   # 被当作字符串，这是 truthy → 始终运行！
 ```
 
-### The `needs` Context in Detail
+### `needs` 上下文的详细说明
 
-The `needs` context is one of the most important for complex workflows:
+`needs` 上下文是复杂工作流中最重要的上下文之一：
 
 ```yaml
-# Accessing outputs from a non-matrix job:
+# 访问非矩阵任务的输出：
 ${{ needs.cache-calc.outputs.dep-key }}
 
-# Accessing outputs from a matrix job — requires specific index:
-# This is NOT possible directly. Matrix job outputs must be aggregated.
+# 访问矩阵任务的输出 — 需要特定索引：
+# 这不能直接实现。矩阵任务输出必须被聚合。
 ```
 
-**Matrix job outputs limitation:** When a matrix job declares `outputs:`, each matrix variant tries to set the same output. The last one to complete wins. This makes matrix outputs unreliable. Workarounds:
-1. Use artifacts instead of outputs for matrix data
-2. Use a non-matrix "aggregator" job that reads artifacts and produces outputs
-3. Accept the last-write-wins behavior
+**矩阵任务输出的限制：** 当矩阵任务声明 `outputs:` 时，每个矩阵变体都尝试设置相同的输出。最后一个完成的变体获胜。这使得矩阵输出不可靠。解决方式：
+1. 对矩阵数据使用构件而不是输出
+2. 使用读取构件并生成输出的非矩阵"聚合器"任务
+3. 接受最后写入者胜出的行为
 
-### The `hashFiles` Function in Detail
+### `hashFiles` 函数的详细说明
 
-The `hashFiles()` function is evaluated on the ACTIONS SERVER, not on the runner. This has implications:
+`hashFiles()` 函数在 Actions 服务器上计算，而不是在运行器上。这有以下影响：
 
 ```yaml
-# hashFiles only works with files in the workspace.
-# It returns different values depending on:
-# 1. The file contents (obviously)
-# 2. The file paths matched by the glob
-# 3. The line ending normalization (Git checkout settings)
+# hashFiles 仅适用于工作区中的文件。
+# 它根据以下因素返回不同的值：
+# 1. 文件内容（显然）
+# 2. glob 匹配的文件路径
+# 3. 行尾规范化（Git 检出设置）
 
-# Best practices:
-# - Always checkout before hashFiles in the same job
-# - Use platform-independent patterns (forward slashes)
-# - Don't include node_modules or dist in hash patterns
+# 最佳实践：
+# - 在同一任务中，始终在 hashFiles 之前执行检出
+# - 使用平台无关的模式（正斜杠）
+# - 不要在哈希模式中包含 node_modules 或 dist
 ```
 
-**Performance note:** `hashFiles()` with recursive globs (`src/**/*.ts`) can be slow in large repositories. If you have 10,000+ TypeScript files, consider a more targeted pattern. In our case `src/` is small enough that this isn't a concern.
+**性能说明：** 在大型仓库中，使用递归 glob（`src/**/*.ts`）的 `hashFiles()` 可能很慢。如果你有 10,000+ 个 TypeScript 文件，考虑使用更有针对性的模式。在我们的例子中，`src/` 足够小，这不是问题。
 
 ---
 
-## 15. Key Patterns Summary
+## 15. 关键模式总结
 
-### Pattern 1: Cache Key Chaining
+### 模式 1：缓存键链接
 
 ```
 dep-key = npm-cache-<lockfile-hash>-<OS>
@@ -1647,9 +1647,9 @@ docker-key = docker-<dockerfile-hash>-<dep-hash>
 test-key = test-<test-hash>
 ```
 
-Build depends on dep → when deps change, build cache auto-invalidates.
+构建依赖于依赖 → 当依赖变化时，构建缓存自动失效。
 
-### Pattern 2: Cache Restore with Fallbacks
+### 模式 2：带后备的缓存恢复
 
 ```yaml
 key: specific-key-with-all-details
@@ -1658,34 +1658,34 @@ restore-keys: |
   even-broader-prefix-
 ```
 
-GitHub Actions tries `key` first, then each `restore-keys` prefix in order, returning the most recently created cache matching each prefix. This provides graceful degradation: best case = exact hit, worst case = no cache.
+GitHub Actions 首先尝试 `key`，然后按顺序尝试每个 `restore-keys` 前缀，返回匹配每个前缀的最近创建的缓存。这提供了优雅降级：最佳情况 = 精确命中，最差情况 = 无缓存。
 
-### Pattern 3: Artifact Pass-Through
+### 模式 3：构件传递
 
 ```
               ┌──────────────┐
-              │ deps-install │──→ node_modules artifact
+              │ deps-install │──→ node_modules 构件
               └──────┬───────┘
                      │
               ┌──────▼───────┐
-              │    build      │──→ dist artifact
+              │    build      │──→ dist 构件
               └──────┬───────┘
                      │
         ┌────────────┼────────────┐
         ▼            ▼            ▼
-   test-unit    test-integ    (other jobs)
+   test-unit    test-integ    （其他任务）
 ```
 
-Artifacts flow forward. Each job produces an artifact consumed by the next stage.
+构件向前流动。每个任务生成一个被下一阶段使用的构件。
 
-### Pattern 4: Explicit Cache Save for Main Branch
+### 模式 4：主分支的显式缓存保存
 
-After all tests pass on main, `cache-warm` explicitly saves caches. This:
-- Guarantees cache entries exist for the next PR
-- Refreshes TTL on existing entries
-- Avoids cold-start slowness
+所有测试在 main 上通过后，`cache-warm` 显式保存缓存。这：
+- 保证下一个 PR 的缓存条目存在
+- 刷新现有条目的 TTL
+- 避免冷启动缓慢
 
-### Pattern 5: Matrix with Exclude for Cost Management
+### 模式 5：带排除的矩阵用于成本管理
 
 ```yaml
 matrix:
@@ -1696,134 +1696,134 @@ exclude:
     node: 18
 ```
 
-This tests the broadest range while excluding expensive or low-value combinations.
+这测试了最广泛的范围，同时排除了昂贵或低价值的组合。
 
-### Pattern 6: Parallel Fast-Feedback + Slow Jobs
+### 模式 6：快速反馈与慢速任务并行
 
 ```
-cache-calc (fast, single)
-    ├── deps-install (matrix, slow) ──→ build (matrix, slow) ──→ tests (parallel)
-    ├── lint (fast, single)
-    └── docker-prepare (fast, single)
+cache-calc（快速，单个）
+    ├── deps-install（矩阵，慢速）──→ build（矩阵，慢速）──→ tests（并行）
+    ├── lint（快速，单个）
+    └── docker-prepare（快速，单个）
 ```
 
-The critical path from `deps-install` through `build` to `tests` determines the total wall-clock time. Fast jobs (`lint`, `docker-prepare`) run in parallel and don't extend the critical path.
+从 `deps-install` 经过 `build` 到 `tests` 的关键路径决定了总实际耗时。快速任务（`lint`、`docker-prepare`）并行运行，不会延长关键路径。
 
-### Pattern 7: Graceful Failure Handling
+### 模式 7：优雅的失败处理
 
-| Technique | Example | Purpose |
+| 技术 | 示例 | 目的 |
 |-----------|---------|---------|
-| `if: always()` | Teardown steps | Ensure cleanup runs even after failure |
-| `if: failure()` | Log collection | Run debugging steps only when needed |
-| `fail-fast: false` | Test matrix | Get signal from all combinations |
-| `\|\| fallback` | Integration test command | Handle missing test configs gracefully |
+| `if: always()` | 清理步骤 | 确保即使在失败后也能进行清理 |
+| `if: failure()` | 日志收集 | 仅在需要时运行调试步骤 |
+| `fail-fast: false` | 测试矩阵 | 从所有组合获取信号 |
+| `\|\|` 后备 | 集成测试命令 | 优雅处理缺失的测试配置 |
 
 ---
 
-## Appendix: Workflow Configuration and Tuning
+## 附录：工作流配置和调优
 
-### Cache Size Management
+### 缓存大小管理
 
-GitHub Actions cache storage is limited per repository (varies by plan, typically 10 GB). Our workflow uses cache in three places:
+每个仓库的 GitHub Actions 缓存存储空间有限（因套餐而异，通常为 10 GB）。我们的工作流在三个地方使用缓存：
 
-| Cache | Scope | Estimated Size | Frequency |
+| 缓存 | 范围 | 估计大小 | 频率 |
 |-------|-------|---------------|-----------|
-| Dependency cache (node_modules) | Per-node-version | 100-500 MB | Every main merge |
-| Build cache (dist/) | Per-node-version | 5-50 MB | Every main merge |
-| Docker layer cache | Shared | 200-2000 MB | Every main merge |
+| 依赖缓存（node_modules） | 每 node 版本 | 100-500 MB | 每次 main 合并 |
+| 构建缓存（dist/） | 每 node 版本 | 5-50 MB | 每次 main 合并 |
+| Docker 层缓存 | 共享 | 200-2000 MB | 每次 main 合并 |
 
-**Tuning tips:**
-- Monitor cache usage in GitHub UI under "Actions > Caches"
-- If approaching the cache limit, reduce cache scope or increase eviction priority
-- Docker layer cache tends to be the largest contributor — consider using `mode=min` instead of `mode=max` to reduce size at the cost of cache hit rate
-- Artifact storage has a separate limit — use `retention-days: 1` for intermediate artifacts
+**调优建议：**
+- 在 GitHub UI 中监控缓存使用情况，路径为"Actions > Caches"
+- 如果接近缓存限制，减小缓存范围或提高淘汰优先级
+- Docker 层缓存通常是最大贡献者 — 考虑使用 `mode=min` 代替 `mode=max` 以减小大小，代价是缓存命中率降低
+- 构件存储有单独的限制 — 对中间构件使用 `retention-days: 1`
 
-### Adjusting Matrix Scope
+### 调整矩阵范围
 
-The current workflow runs up to 3 (deps-install) + 3 (build) + 10 (test-unit) + 1 (lint) + 1 (docker-prepare) + 1 (test-integration) + 1 (cache-warm) = 20 parallel jobs. This is within typical GitHub Actions limits but may hit concurrency limits on smaller plans.
+当前工作流最多运行 3（deps-install）+ 3（build）+ 10（test-unit）+ 1（lint）+ 1（docker-prepare）+ 1（test-integration）+ 1（cache-warm）= 20 个并行任务。这在典型的 GitHub Actions 限制范围内，但在较小的套餐上可能达到并发限制。
 
-**To reduce concurrency:**
+**为减少并发：**
 ```yaml
-# Add max-parallel to strategy
+# 向 strategy 添加 max-parallel
 strategy:
   max-parallel: 5
 ```
 
-**To target specific Node versions:**
+**为定位特定 Node 版本：**
 ```yaml
-# Only latest two LTS versions
+# 仅最新两个 LTS 版本
 matrix:
   node: [20, 22]
 ```
 
-**To reduce OS coverage:**
+**为减少操作系统覆盖：**
 ```yaml
-# Linux-only testing (drop Windows)
+# 仅 Linux 测试（去掉 Windows）
 matrix:
   node: [18, 20, 22]
   os: [ubuntu-latest]
   shard: [1, 2]
 ```
 
-### Monitoring Workflow Performance
+### 监控工作流性能
 
-Key metrics to track:
+要跟踪的关键指标：
 
-| Metric | What It Measures | Target |
+| 指标 | 衡量内容 | 目标 |
 |--------|-----------------|--------|
-| Total wall-clock time | Time from trigger to completion | < 10 min |
-| Cache hit rate | Percentage of cache restores that hit | > 80% |
-| Artifact transfer time | Time to upload/download artifacts | < 30s |
-| Test shard imbalance | Difference between fastest and slowest shard | < 20% |
+| 总实际耗时 | 从触发到完成的时间 | < 10 分钟 |
+| 缓存命中率 | 缓存恢复的命中百分比 | > 80% |
+| 构件传输时间 | 上传/下载构件的时间 | < 30 秒 |
+| 测试分片不平衡 | 最快和最慢分片之间的差异 | < 20% |
 
-To monitor cache hit rate, add this step to any cache-restoring job:
+要监控缓存命中率，向任何缓存恢复任务添加此步骤：
 
 ```yaml
-- name: Report cache status
+- name: 报告缓存状态
   if: always()
   run: echo "Cache hit: ${{ steps.deps-cache-restore.outputs.cache-hit }}"
 ```
 
-### Environment-Specific Configuration
+### 特定环境的配置
 
-The workflow uses `env.NODE_VERSION` (20) as the default. For projects with different LTS schedules:
+工作流使用 `env.NODE_VERSION`（20）作为默认值。对于具有不同 LTS 计划的项目：
 
 ```yaml
 env:
-  NODE_VERSION: 18    # For projects requiring older LTS
-  NODE_LTS: 20        # Latest LTS
+  NODE_VERSION: 18    # 对于需要较旧 LTS 的项目
+  NODE_LTS: 20        # 最新 LTS
 ```
 
-For monorepos with multiple packages, the `hashFiles()` patterns may need adjustment:
+对于具有多个包的单仓库，`hashFiles()` 模式可能需要调整：
 
 ```yaml
-# For a monorepo with packages/ directory:
+# 对于具有 packages/ 目录的单仓库：
 hashFiles('packages/*/package-lock.json', 'package-lock.json')
 ```
 
 ---
 
-## Appendix: Alternative Approaches and Design Tradeoffs
+## 附录：替代方案和设计权衡
 
-### Approach A: Centralized Key Computation (Our Choice)
+### 方案 A：集中式键计算（我们的选择）
 
-**How it works:** One job computes all cache keys, downstream jobs read them via `needs.outputs`.
+**工作原理：** 一个任务计算所有缓存键，下游任务通过 `needs.outputs` 读取它们。
 
-**Pros:**
-- Single point of truth for key computation logic
-- Consistent patterns across all jobs
-- Easy to audit and modify
+**优点：**
+- 键计算逻辑的单一控制点
+- 所有任务的一致模式
+- 易于审计和修改
 
-**Cons:**
-- Adds one sequential job to the critical path (15-30s)
-- Key computation is separated from usage (cognitive overhead)
-- Matrix jobs must construct their own keys with appended matrix values
+**缺点：**
+- 在关键路径上增加一个顺序任务（15-30 秒）
+- 键计算与使用分离（认知开销）
+- 矩阵任务必须使用附加的矩阵值构造自己的键
 
-**Best for:** Teams that value consistency and auditability. Large workflows with many cache consumers.
+**最适合：** 重视一致性和可审计性的团队。具有许多缓存消费者的大型工作流。
 
-### Approach B: Distributed Key Computation
+### 方案 B：分布式键计算
 
-**How it works:** Each job computes its own cache key using `hashFiles()` directly, with no shared key job.
+**工作原理：** 每个任务直接使用 `hashFiles()` 计算自己的缓存键，没有共享的键计算任务。
 
 ```yaml
 deps-install:
@@ -1836,131 +1836,131 @@ deps-install:
         key: ${{ steps.compute.outputs.key }}
 ```
 
-**Pros:**
-- Simpler DAG (one fewer job)
-- Keys naturally include matrix values
-- No cross-job output wiring
+**优点：**
+- 更简单的 DAG（少一个任务）
+- 键自然包含矩阵值
+- 无需跨任务输出连接
 
-**Cons:**
-- Key computation logic duplicated across jobs
-- Drift risk: different patterns for the "same" key
-- Harder to audit (must check every job)
+**缺点：**
+- 键计算逻辑在各任务间重复
+- 漂移风险：相同"键"的不同模式
+- 更难审计（必须检查每个任务）
 
-**Best for:** Small workflows with 2-3 jobs. Prototypes and simple CI setups.
+**最适合：** 具有 2-3 个任务的小型工作流。原型和简单 CI 设置。
 
-### Approach C: Hybrid (Keys in Env Vars)
+### 方案 C：混合（环境变量中的键）
 
-**How it works:** Compute keys at the workflow level using `env:` and `hashFiles()`:
+**工作原理：** 使用 `env:` 和 `hashFiles()` 在工作流级别计算键：
 
 ```yaml
 env:
   DEP_KEY: npm-cache-${{ hashFiles('package-lock.json') }}
 ```
 
-**Why this doesn't work:** `hashFiles()` in `env:` is evaluated at a different point in the workflow lifecycle and may not have access to the checkout. GitHub Actions does not support `hashFiles()` in the top-level `env:` block reliably.
+**为什么这不起作用：** `env:` 中的 `hashFiles()` 在工作流生命周期的不同时间点计算，可能无法访问检出。GitHub Actions 不可靠地支持顶层 `env:` 块中的 `hashFiles()`。
 
-**Best for:** Nothing — it doesn't work reliably. Avoid this pattern.
+**最适合：** 不适用 — 它不可靠地工作。避免此模式。
 
-### Approach D: Artifact-Only (No Cache)
+### 方案 D：仅构件（无缓存）
 
-**How it works:** Use artifacts for all pass-through, skip `actions/cache` entirely.
+**工作原理：** 对所有传递使用构件，完全跳过 `actions/cache`。
 
-**Pros:**
-- Simpler setup (no cache keys)
-- No cache storage costs
-- No cache eviction concerns
+**优点：**
+- 更简单的设置（无缓存键）
+- 无缓存存储成本
+- 无缓存淘汰问题
 
-**Cons:**
-- No cross-run persistence: every first push to a branch starts from scratch
-- Artifacts are deleted after `retention-days`
-- Slower than cache for cross-run scenarios
+**缺点：**
+- 无跨运行持久性：每次首次推送到分支都从头开始
+- 构件在 `retention-days` 后被删除
+- 在跨运行场景中比缓存慢
 
-**Best for:** Repositories with very infrequent CI runs where cache efficiency is irrelevant.
+**最适合：** CI 运行非常不频繁的仓库，其中缓存效率无关紧要。
 
-### Why We Chose Approach A
+### 为什么我们选择了方案 A
 
-For this workflow, the centralized approach wins because:
-1. **Auditability:** One `cache-calc` job documents ALL cache key patterns
-2. **Consistency:** Every job reads from the same source — no drift
-3. **Educational value:** Demonstrates job outputs, needs chaining, and expression composition
-4. **Production readiness:** The slight overhead of one extra job is negligible compared to total build time (15s vs 5-8 min)
+对于此工作流，集中式方法胜出，因为：
+1. **可审计性：** 一个 `cache-calc` 任务记录了所有缓存键模式
+2. **一致性：** 每个任务从同一来源读取 — 没有漂移
+3. **教育价值：** 演示了任务输出、needs 链接和表达式组合
+4. **生产就绪：** 一个额外任务的轻微开销与总构建时间相比微不足道（15 秒对比 5-8 分钟）
 
-### Sharding Strategy Comparison
+### 分片策略比较
 
-| Strategy | Shard mechanism | Setup complexity | Load balance |
+| 策略 | 分片机制 | 设置复杂度 | 负载均衡 |
 |----------|----------------|------------------|--------------|
-| Vitest `--shard` | Built into test runner | Low | Good (file-level) |
-| Jest `--shard` | Built into test runner | Low | Good (file-level) |
-| Manual file splitting | Custom script | High | Best (test-level) |
-| `github.graphql` query | Query API for files | High | Poor (no test weighting) |
+| Vitest `--shard` | 内置于测试运行器 | 低 | 良好（文件级别） |
+| Jest `--shard` | 内置于测试运行器 | 低 | 良好（文件级别） |
+| 手动文件拆分 | 自定义脚本 | 高 | 最佳（测试级别） |
+| `github.graphql` 查询 | 查询 API 获取文件 | 高 | 差（无测试加权） |
 
-Vitest sharding is the recommended approach for projects already using Vitest. It requires no custom infrastructure and provides deterministic file splitting.
+Vitest 分片是已经使用 Vitest 的项目的推荐方法。它不需要自定义基础设施，并提供确定性的文件拆分。
 
 ---
 
-## Appendix: Common GitHub Actions Pitfalls
+## 附录：常见的 GitHub Actions 陷阱
 
-### Pitfall 1: `hashFiles` Without Checkout
+### 陷阱 1：未检出时使用 `hashFiles`
 
 ```yaml
-# WRONG — hashFiles returns empty string (no files found)
+# 错误 — hashFiles 返回空字符串（未找到文件）
 steps:
   - id: compute
     run: echo "hash=${{ hashFiles('package.json') }}" >> "$GITHUB_OUTPUT"
 
-# CORRECT — checkout first
+# 正确 — 先检出
 steps:
   - uses: actions/checkout@v4
   - id: compute
     run: echo "hash=${{ hashFiles('package.json') }}" >> "$GITHUB_OUTPUT"
 ```
 
-### Pitfall 2: String vs Boolean in `if:`
+### 陷阱 2：`if:` 中的字符串与布尔值
 
 ```yaml
-# WRONG — string 'true' is always truthy
+# 错误 — 字符串 'true' 始终为 truthy
 if: 'true'
 
-# CORRECT — boolean true
+# 正确 — 布尔值 true
 if: true
 
-# CORRECT — string comparison for values
+# 正确 — 用于值的字符串比较
 if: github.ref == 'refs/heads/main'
 ```
 
-### Pitfall 3: Cache Key Changes with Every Push
+### 陷阱 3：缓存键随每次推送变化
 
 ```yaml
-# WRONG — cache NEVER hits because SHA changes every time
+# 错误 — 缓存永远不会命中，因为 SHA 每次变化
 key: build-${{ github.sha }}
 
-# CORRECT — hashFiles captures content identity
+# 正确 — hashFiles 捕获内容标识
 key: build-${{ hashFiles('src/**/*.ts') }}
 ```
 
-### Pitfall 4: No `restore-keys` on First Run
+### 陷阱 4：首次运行时没有 `restore-keys`
 
-On the very first workflow run for a new repository, no cache exists. Without `restore-keys`, the cache step just skips (no error, no restore). With `restore-keys`, at least there's a chance of a partial match from other workflows.
+对于新仓库的第一次工作流运行，不存在缓存。没有 `restore-keys`，缓存步骤只是跳过（无错误，无恢复）。有 `restore-keys`，至少有机会从其他工作流中获得部分匹配。
 
-### Pitfall 5: Artifact Name Collisions
+### 陷阱 5：构件名称冲突
 
 ```yaml
-# WRONG — all matrix jobs upload to the same artifact name
+# 错误 — 所有矩阵任务上传到相同的构件名称
 name: node_modules
 
-# CORRECT — each matrix variant has a unique name
+# 正确 — 每个矩阵变体都有唯一的名称
 name: node_modules-${{ matrix.node }}
 ```
 
-### Pitfall 6: Missing Teardown in Integration Tests
+### 陷阱 6：集成测试中缺少清理
 
 ```yaml
-# WRONG — if tests fail, docker compose is never stopped
+# 错误 — 如果测试失败，docker compose 永远不会停止
 - run: docker compose up -d
-- run: npm run test:integration   # if this fails → containers leak!
-- run: docker compose down        # never runs
+- run: npm run test:integration   # 如果失败 → 容器泄漏！
+- run: docker compose down        # 永远不会运行
 
-# CORRECT — teardown always runs
+# 正确 — 清理始终运行
 - run: docker compose up -d
 - run: npm run test:integration
 - if: always()
@@ -1969,95 +1969,95 @@ name: node_modules-${{ matrix.node }}
 
 ---
 
-## Appendix: Action Version Compatibility
+## 附录：操作版本兼容性
 
-### `actions/cache@v4` Breaking Changes from v3
+### `actions/cache@v4` 与 v3 的破坏性变化
 
-| Change | v3 | v4 |
+| 变化 | v3 | v4 |
 |--------|----|----|
-| Cache key format | Plain string | Same (no change) |
-| Save behavior | Post-action only | Post-action only |
-| Sub-actions | N/A (single action) | `restore`, `save`, full |
-| Windows paths | Forward slashes | Native backslashes |
-| Cache size limit | ~5 GB | ~10 GB |
-| Compression | gzip | zstd (faster) |
+| 缓存键格式 | 纯字符串 | 相同（无变化） |
+| 保存行为 | 仅后操作 | 仅后操作 |
+| 子操作 | 不适用（单个操作） | `restore`、`save`、完整 |
+| Windows 路径 | 正斜杠 | 本机反斜杠 |
+| 缓存大小限制 | 约 5 GB | 约 10 GB |
+| 压缩 | gzip | zstd（更快） |
 
-### `actions/upload-artifact@v4` Breaking Changes from v3
+### `actions/upload-artifact@v4` 与 v3 的破坏性变化
 
-| Change | v3 | v4 |
+| 变化 | v3 | v4 |
 |--------|----|----|
-| Multiple uploads to same name | Merged | Replaced (last wins) |
-| Root behavior | Flattened | Preserved |
-| Cross-workflow download | Not supported | Supported with `run-id` |
-| Storage format | ZIP | ZIP (but faster) |
+| 多次上传到同一名称 | 合并 | 替换（最后者胜） |
+| 根目录行为 | 扁平化 | 保留 |
+| 跨工作流下载 | 不支持 | 支持 `run-id` |
+| 存储格式 | ZIP | ZIP（但更快） |
 
-### `docker/build-push-action@v6` Key Features
+### `docker/build-push-action@v6` 关键特性
 
-- Built-in BuildKit support (no separate `setup-buildx` needed in newer versions, but explicit is better)
-- Multiple cache backend support (gha, registry, local, S3, Azure)
-- `provenance` and `sbom` attestation support
-- Multi-platform builds
-- Secrets mounting
-- `cache-from` and `cache-to` as first-class inputs
+- 内置 BuildKit 支持（较新版本中不需要单独的 `setup-buildx`，但显式声明更好）
+- 多种缓存后端支持（gha、registry、local、S3、Azure）
+- `provenance` 和 `sbom` 证明支持
+- 多平台构建
+- 密钥挂载
+- `cache-from` 和 `cache-to` 作为一等输入
 
 ---
 
-## Appendix: The 8-Job DAG Reference
+## 附录：8 任务 DAG 参考
 
 ```
                           ┌──────────────────┐
-                          │   cache-calc      │  (compute all cache keys)
+                          │   cache-calc      │（计算所有缓存键）
                           └────────┬─────────┘
                                    │
                     ┌──────────────┼──────────────┐
                     ▼              ▼              ▼
           ┌─────────────────┐ ┌──────────┐ ┌──────────┐
           │  deps-install    │ │ lint     │ │ docker   │
-          │ (npm ci + cache) │ │ typecheck│ │ prepare  │
+          │（npm ci + 缓存）   │ │ 类型检查  │ │ prepare  │
           └────────┬────────┘ └──────────┘ └──────────┘
                    │
                    ▼
           ┌─────────────────┐
           │     build        │
-          │ (tsc + vite)     │
+          │（tsc + vite）     │
           └────────┬─────────┘
                    │
           ┌────────┴────────┐
           ▼                 ▼
    ┌─────────────┐   ┌──────────────┐
    │  test-unit   │   │ test-integ   │
-   │ (matrix x10) │   │ (docker)     │
+   │（矩阵 x10）   │   │（docker）     │
    └─────────────┘   └──────┬───────┘
                             │
                             ▼
                    ┌──────────────────┐
-                   │  cache-warm      │  (main only)
-                   │  (prime caches   │
-                   │   for next build)│
+                   │  cache-warm      │（仅 main）
+                   │（预热缓存         │
+                   │   为下次构建）     │
                    └──────────────────┘
 ```
 
-The DAG shows the execution dependency flow. Jobs at the same horizontal level (e.g., `lint` and `docker-prepare`) run in PARALLEL. Jobs connected by arrows run SEQUENTIALLY (the downstream job waits for the upstream one).
+DAG 显示了执行依赖流程。处于同一水平级别的任务（例如 `lint` 和 `docker-prepare`）**并行**运行。由箭头连接的任务**顺序**运行（下游任务等待上游任务）。
 
-**Total execution timelines (estimated):**
+**总执行时间线（估计）：**
 
-| Stage | Wall-clock time | Parallelism |
+| 阶段 | 实际耗时 | 并行度 |
 |-------|----------------|-------------|
-| cache-calc | 15s | 1 runner |
-| deps-install | 60-120s | 3 runners (matrix) |
-| lint | 30-60s | 1 runner (parallel with docker-prepare) |
-| docker-prepare | 60-120s | 1 runner (parallel with lint) |
-| build | 60-120s | 3 runners (matrix, after deps-install) |
-| test-unit | 120-300s | 10 runners (matrix, after build) |
-| test-integration | 180-300s | 1 runner (after build, parallel with test-unit) |
-| cache-warm | 60-120s | 1 runner (after tests, main only) |
+| cache-calc | 15 秒 | 1 个运行器 |
+| deps-install | 60-120 秒 | 3 个运行器（矩阵） |
+| lint | 30-60 秒 | 1 个运行器（与 docker-prepare 并行） |
+| docker-prepare | 60-120 秒 | 1 个运行器（与 lint 并行） |
+| build | 60-120 秒 | 3 个运行器（矩阵，在 deps-install 之后） |
+| test-unit | 120-300 秒 | 10 个运行器（矩阵，在 build 之后） |
+| test-integration | 180-300 秒 | 1 个运行器（在 build 之后，与 test-unit 并行） |
+| cache-warm | 60-120 秒 | 1 个运行器（在测试之后，仅 main） |
 
-**Critical path:** cache-calc → deps-install → build → test-unit (or test-integration) → cache-warm
+**关键路径：** cache-calc → deps-install → build → test-unit（或 test-integration）→ cache-warm
 
-Total estimated minimum wall-clock time: ~5-8 minutes (with full cache hits).
+估计的最小总实际耗时：约 5-8 分钟（完全缓存命中时）。
 
 ---
 
-> **End of documentation for Workflow 1: Advanced Cache & Build Acceleration.**
+> **工作流 1：高级缓存与构建加速的文档到此结束。**
 >
-> Return to [DESIGN.md](../DESIGN.md) for the full lab specification.
+> 返回 [DESIGN.md](../DESIGN.md) 查看完整的实验规范。
