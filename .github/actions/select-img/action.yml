@@ -20,7 +20,7 @@ runs:
     - name: Run select_img.py
       shell: bash
       run: |
-        python3 ${{ github.action_path }}/../../plugin/select_img.py \
+        python3 ${{ github.action_path }}/../../../plugin/select_img.py \
           "${{ inputs.target_branch }}" \
           "${{ runner.temp }}/select_img_result.json"
 
