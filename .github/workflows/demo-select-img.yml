@@ -1,0 +1,29 @@
+name: Demo - Select Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: '目标分支'
+        required: true
+        type: string
+        default: 'master'
+
+jobs:
+  select-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select image by branch
+        id: select
+        uses: ./.github/actions/select-img
+        with:
+          target_branch: ${{ inputs.target_branch }}
+
+      - name: Show selected images
+        run: |
+          echo "Target branch: ${{ inputs.target_branch }}"
+          echo "x86 image: ${{ steps.select.outputs.x86_img }}"
+          echo "ARM image: ${{ steps.select.outputs.arm_img }}"

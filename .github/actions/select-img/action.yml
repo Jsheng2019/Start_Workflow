@@ -1,0 +1,34 @@
+name: Select Docker Image
+description: '根据目标分支选择对应的 x86/ARM Docker 镜像'
+
+inputs:
+  target_branch:
+    description: '目标分支名，如 master, v2.6.0, v2.7.1 等'
+    required: true
+
+outputs:
+  x86_img:
+    description: 'x86 架构的 Docker 镜像地址'
+    value: ${{ steps.read-output.outputs.x86_img }}
+  arm_img:
+    description: 'ARM 架构的 Docker 镜像地址'
+    value: ${{ steps.read-output.outputs.arm_img }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run select_img.py
+      shell: bash
+      run: |
+        python3 ${{ github.action_path }}/../../plugin/select_img.py \
+          "${{ inputs.target_branch }}" \
+          "${{ runner.temp }}/select_img_result.json"
+
+    - name: Read outputs
+      id: read-output
+      shell: bash
+      run: |
+        x86=$(jq -r '.x86' "${{ runner.temp }}/select_img_result.json")
+        arm=$(jq -r '.ARM' "${{ runner.temp }}/select_img_result.json")
+        echo "x86_img=$x86" >> "$GITHUB_OUTPUT"
+        echo "arm_img=$arm" >> "$GITHUB_OUTPUT"
