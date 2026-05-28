@@ -1,0 +1,39 @@
+# Pre-commit hook configuration for Start_Workflow
+# Run: pre-commit install && pre-commit run --all-files
+# CI: pre-commit run --all-files
+
+repos:
+  # ---- 通用文件检查 ------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        name: Check YAML 语法
+      - id: check-json
+        name: Check JSON 语法
+      - id: check-merge-conflict
+        name: Check 合并冲突标记
+      - id: end-of-file-fixer
+        name: Fix 文件末尾换行
+      - id: trailing-whitespace
+        name: Trim 行尾空白
+        args: [--markdown-linebreak-ext=md]
+      - id: mixed-line-ending
+        name: Fix 混合换行符
+        args: [--fix=lf]
+      - id: check-added-large-files
+        name: Check 大文件
+        args: [--maxkb=500]
+      - id: detect-private-key
+        name: Detect 私钥泄露
+      - id: check-executables-have-shebangs
+        name: Check Shell 脚本 shebang
+      - id: check-shebang-scripts-are-executable
+        name: Check shebang 脚本可执行
+
+  # ---- YAML/JSON 格式化 --------------------------------------------
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.31.3
+    hooks:
+      - id: check-github-workflows
+        name: Validate GitHub Actions workflows
