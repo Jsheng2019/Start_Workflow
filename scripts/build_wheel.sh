@@ -95,11 +95,18 @@ export PYTORCH_BUILD_NUMBER=1
 echo ""
 echo "Build version: ${PYTORCH_BUILD_VERSION}+${CUDA_VERSION}"
 
-# ---- Install cmake (PyTorch requires >= 3.27, container may have older) ----
+# ---- Install cmake (PyTorch requires >= 3.27, container has conda cmake 3.18) ----
 echo ""
 echo "--- Installing cmake >= 3.27 ---"
 ${PYTHON_BIN} -m pip install --quiet "cmake>=3.27"
-echo "cmake: $(${PYTHON_BIN} -m cmake --version 2>/dev/null || which cmake && cmake --version | head -1)"
+
+# Conda's cmake 3.18 at /opt/conda/bin/cmake shadows the pip-installed one.
+# Remove it so pip's cmake (at $(dirname ${PYTHON_BIN})/cmake) takes priority.
+if [ -f /opt/conda/bin/cmake ]; then
+    echo "Removing conda cmake 3.18 — pip cmake will be used instead"
+    rm -f /opt/conda/bin/cmake
+fi
+echo "cmake: $(cmake --version 2>/dev/null | head -1 || echo 'not found')"
 
 # ---- Install build dependencies ----
 echo ""
