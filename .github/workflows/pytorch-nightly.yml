@@ -76,7 +76,7 @@ on:
           - ubuntu-latest-4
           - ubuntu-latest-8
           - ubuntu-latest-16
-        default: ubuntu-latest-4
+        default: ubuntu-latest
       pytorch-ref:
         description: 'PyTorch git ref (branch, tag, or commit SHA)'
         required: false
@@ -172,7 +172,7 @@ jobs:
 # ===========================================================================
   build:
     needs: generate-matrix
-    runs-on: ${{ inputs.runner || 'ubuntu-latest-4' }}
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     strategy:
       matrix: ${{ fromJson(needs.generate-matrix.outputs.build-matrix) }}
       fail-fast: false
