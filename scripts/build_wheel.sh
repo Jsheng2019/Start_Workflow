@@ -95,6 +95,12 @@ export PYTORCH_BUILD_NUMBER=1
 echo ""
 echo "Build version: ${PYTORCH_BUILD_VERSION}+${CUDA_VERSION}"
 
+# ---- Install cmake (PyTorch requires >= 3.27, container may have older) ----
+echo ""
+echo "--- Installing cmake >= 3.27 ---"
+${PYTHON_BIN} -m pip install --quiet "cmake>=3.27"
+echo "cmake: $(${PYTHON_BIN} -m cmake --version 2>/dev/null || which cmake && cmake --version | head -1)"
+
 # ---- Install build dependencies ----
 echo ""
 echo "--- Installing build dependencies ---"
