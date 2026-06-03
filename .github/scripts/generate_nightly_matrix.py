@@ -22,9 +22,9 @@ import sys
 # Mapping from CUDA version code to manylinux container image tag
 # In production, these would be full manylinux CUDA images.
 CUDA_TO_CONTAINER = {
-    "cpu": "quay.io/pypa/manylinux_2_28_x86_64:2025-03-24-e43cb71",
-    "cu124": "quay.io/pypa/manylinux_2_28_x86_64:2025-03-24-e43cb71",
-    "cu126": "quay.io/pypa/manylinux_2_28_x86_64:2025-03-24-e43cb71",
+    "cpu": "quay.io/pypa/manylinux_2_28_x86_64:latest",
+    "cu124": "quay.io/pypa/manylinux_2_28_x86_64:latest",
+    "cu126": "quay.io/pypa/manylinux_2_28_x86_64:latest",
 }
 
 # Python ABI tag mapping (cpXY-cpXY) used by manylinux images
