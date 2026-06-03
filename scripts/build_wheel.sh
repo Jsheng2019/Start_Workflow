@@ -101,12 +101,16 @@ echo "--- Installing cmake >= 3.27 ---"
 ${PYTHON_BIN} -m pip install --quiet "cmake>=3.27"
 
 # Conda's cmake 3.18 at /opt/conda/bin/cmake shadows the pip-installed one.
-# Remove it so pip's cmake (at $(dirname ${PYTHON_BIN})/cmake) takes priority.
+# Remove it and add pip's bin dir to PATH so pip-installed cmake is found.
 if [ -f /opt/conda/bin/cmake ]; then
-    echo "Removing conda cmake 3.18 — pip cmake will be used instead"
+    echo "Removing conda cmake 3.18"
     rm -f /opt/conda/bin/cmake
+    rm -f /opt/conda/bin/cmake3 2>/dev/null || true
 fi
-echo "cmake: $(cmake --version 2>/dev/null | head -1 || echo 'not found')"
+# Ensure pip-installed binaries (cmake) are in PATH
+PIP_BIN_DIR="$(dirname ${PYTHON_BIN})"
+export PATH="${PIP_BIN_DIR}:${PATH}"
+echo "cmake: $(which cmake 2>/dev/null && cmake --version | head -1 || echo 'not found')"
 
 # ---- Install build dependencies ----
 echo ""
