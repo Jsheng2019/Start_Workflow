@@ -1,86 +1,181 @@
 #!/bin/bash
 # =============================================================================
-# Build PyTorch community nightly wheel
+# Build PyTorch Wheel from Source (REAL COMPILATION)
 # =============================================================================
-# This script mimics PyTorch's .ci/manywheel/build.sh pattern:
-#   1. Source the binary environment file
-#   2. Build the wheel using the correct Python version
-#   3. Output wheel to dist/
+# This script is designed to run inside a pytorch/manylinux2_28-builder
+# container. It clones the PyTorch repository, compiles the full C++/CUDA
+# library from source, and produces a manylinux-compatible wheel.
 #
-# Environment variables (set by the workflow, matching PyTorch convention):
-#   DESIRED_PYTHON    - Target Python version (e.g., "3.12")
-#   DESIRED_CUDA      - Target CUDA variant (e.g., "cpu", "cu124")
-#   PACKAGE_TYPE      - Package type (e.g., "manywheel")
-#   BUILD_ENVIRONMENT - Build environment label
+# This mirrors what PyTorch's own CI does in:
+#   .ci/pytorch/build.sh
+#   .ci/pytorch/binary_populate_env.sh
+#   manywheel/build.sh (pytorch/builder repo)
+#
+# Environment variables (set by the workflow):
+#   DESIRED_PYTHON       - Target Python version (e.g., "3.12")
+#   DESIRED_CUDA         - CUDA variant (e.g., "cpu", "cu124")
+#   MAX_JOBS             - Parallel compile jobs (default: 2)
+#   PYTORCH_BUILD_VERSION - Version string override (auto-generated if unset)
 # =============================================================================
 
 set -euo pipefail
 
-# ---- Manylinux Python path resolution ----
-# In manylinux images, Pythons live at /opt/python/cpXY-cpXY/bin/python
+# ---- Resolve Python in manylinux container ----
 PYTHON_VERSION="${DESIRED_PYTHON:-3.12}"
 CUDA_VERSION="${DESIRED_CUDA:-cpu}"
-PACKAGE_TYPE="${PACKAGE_TYPE:-manywheel}"
-BUILD_ENV="${BUILD_ENVIRONMENT:-linux-binary-manywheel}"
-
-PYTHON_SHORT="cp${PYTHON_VERSION//./}"
-PYTHON_BIN="/opt/python/${PYTHON_SHORT}-${PYTHON_SHORT}/bin/python"
+PY_SHORT="cp${PYTHON_VERSION//./}"
+PYTHON_BIN="/opt/python/${PY_SHORT}-${PY_SHORT}/bin/python"
 
 echo "============================================"
-echo " PyTorch Community Nightly Build (Demo)"
+echo " PyTorch Community Nightly Build"
 echo "============================================"
-echo " Python:       ${PYTHON_VERSION}  (${PYTHON_SHORT})"
-echo " CUDA:         ${CUDA_VERSION}"
-echo " Package:      ${PACKAGE_TYPE}"
-echo " Build env:    ${BUILD_ENV}"
-echo " Python bin:   ${PYTHON_BIN}"
+echo " Python:        ${PYTHON_VERSION}  (${PY_SHORT})"
+echo " CUDA variant:  ${CUDA_VERSION}"
+echo " Max jobs:      ${MAX_JOBS:-2}"
+echo " Build env:     ${BUILD_ENVIRONMENT:-linux-binary-manywheel}"
+echo " Python path:   ${PYTHON_BIN}"
 echo "============================================"
 
-# Verify Python exists
 if [ ! -x "${PYTHON_BIN}" ]; then
-    echo "ERROR: Python ${PYTHON_VERSION} not found at ${PYTHON_BIN}"
-    echo "Available Pythons:"
-    ls /opt/python/ 2>/dev/null || echo "  (none found)"
+    echo "ERROR: Python ${PYTHON_VERSION} not found in container"
+    echo "Available:"
+    ls /opt/python/ 2>/dev/null || echo "  (none)"
     exit 1
 fi
 
 ${PYTHON_BIN} --version
 
-# ---- Build the wheel ----
-# In the real PyTorch pipeline, this step:
-#   1. Compiles 100+ C/C++/CUDA source files
-#   2. Links against cuDNN, NCCL, BLAS, etc.
-#   3. Produces a ~200MB manylinux wheel
-#
-# For this demo, we build a tiny C extension wheel that demonstrates
-# the same pipeline structure in seconds.
+# ---- Clone PyTorch source ----
+PYTORCH_DIR="${GITHUB_WORKSPACE:-/tmp}/pytorch-src"
+if [ ! -f "${PYTORCH_DIR}/CMakeLists.txt" ]; then
+    echo ""
+    echo "--- Cloning PyTorch (depth=1, branch=main) ---"
+    git clone --depth=1 --branch=main --single-branch \
+        https://github.com/pytorch/pytorch.git "${PYTORCH_DIR}"
+    echo "Clone complete ($(du -sh "${PYTORCH_DIR}" | cut -f1))"
+else
+    echo ""
+    echo "--- Using existing PyTorch source ---"
+    cd "${PYTORCH_DIR}"
+    echo "Commit: $(git rev-parse --short HEAD)"
+fi
 
+cd "${PYTORCH_DIR}"
+PYTORCH_COMMIT=$(git rev-parse --short HEAD)
+echo "PyTorch commit: ${PYTORCH_COMMIT}"
+echo "PyTorch dir size: $(du -sh . 2>/dev/null | cut -f1)"
+
+# ---- Initialize minimal submodules ----
+echo ""
+echo "--- Initializing submodules ---"
+# PyTorch needs these submodules even for CPU builds
+git submodule update --init --depth=1 --jobs=2 \
+    third_party/pybind11 \
+    third_party/cpuinfo \
+    third_party/FP16 \
+    third_party/FXdiv \
+    third_party/pthreadpool \
+    third_party/psimd \
+    third_party/XNNPACK \
+    third_party/NEON_2_SSE \
+    2>/dev/null || echo "  (some submodules may not exist; continuing)"
+
+# ---- Set build version ----
+if [ -z "${PYTORCH_BUILD_VERSION:-}" ]; then
+    if [ -f version.txt ]; then
+        BASE_VER=$(head -1 version.txt | sed 's/a.*//')
+    else
+        BASE_VER="2.8.0"
+    fi
+    PYTORCH_BUILD_VERSION="${BASE_VER}.dev$(date +%Y%m%d)"
+fi
+export PYTORCH_BUILD_VERSION
+export PYTORCH_BUILD_NUMBER=1
+
+echo ""
+echo "Build version: ${PYTORCH_BUILD_VERSION}+${CUDA_VERSION}"
+
+# ---- Install build dependencies ----
 echo ""
 echo "--- Installing build dependencies ---"
-${PYTHON_BIN} -m pip install --quiet build setuptools wheel
+${PYTHON_BIN} -m pip install --quiet --upgrade pip
+${PYTHON_BIN} -m pip install --quiet -r requirements.txt 2>&1 | tail -5
+${PYTHON_BIN} -m pip install --quiet build wheel setuptools
+
+# ---- Configure ccache (if available) ----
+if command -v ccache &>/dev/null; then
+    export CCACHE_DIR="${CCACHE_DIR:-${HOME}/.ccache}"
+    ccache -M 2G 2>/dev/null || true
+    ccache -z 2>/dev/null || true
+    export CMAKE_C_COMPILER_LAUNCHER=ccache
+    export CMAKE_CXX_COMPILER_LAUNCHER=ccache
+    echo "ccache: $(ccache -V 2>/dev/null | head -1), max: $(ccache -M 2>/dev/null || echo '2G')"
+fi
+
+# ---- Build environment variables ----
+# These match the settings PyTorch's CI uses for CPU-only builds.
+# We disable everything non-essential to keep build time reasonable
+# on standard GitHub runners (2 cores, 7 GB RAM).
+export USE_CUDA=0
+export USE_CUDNN=0
+export USE_FBGEMM=1
+export USE_DISTRIBUTED=0
+export USE_NCCL=0
+export BUILD_TEST=0
+export BUILD_CAFFE2_OPS=0
+export MAX_JOBS="${MAX_JOBS:-2}"
+export CMAKE_BUILD_TYPE=Release
+export ATEN_THREADING=NATIVE
+export USE_GOLD_LINKER=ON
 
 echo ""
-echo "--- Building ${PACKAGE_TYPE} wheel for Python ${PYTHON_VERSION} (${CUDA_VERSION}) ---"
-cd "${GITHUB_WORKSPACE:-.}/demo-pytorch"
+echo "Build configuration:"
+echo "  USE_CUDA=${USE_CUDA}"
+echo "  BUILD_TEST=${BUILD_TEST}"
+echo "  MAX_JOBS=${MAX_JOBS}"
+echo "  CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
 
-export DESIRED_PYTHON="${PYTHON_VERSION}"
-export DESIRED_CUDA="${CUDA_VERSION}"
+# ---- BUILD ----
+echo ""
+echo "============================================"
+echo " STARTING PYTORCH COMPILATION"
+echo " This compiles ~3000 C++ source files."
+echo " Estimated: 2–4 hours on standard runner."
+echo "============================================"
+echo ""
 
-${PYTHON_BIN} -m build --wheel --outdir dist/
+cd "${PYTORCH_DIR}"
+BUILD_START=$(date +%s)
+
+# Clean any previous build artifacts
+${PYTHON_BIN} setup.py clean 2>/dev/null || true
+
+# Build the wheel
+# We use setup.py bdist_wheel (traditional method) rather than
+# python -m build because it gives more control over the build process.
+${PYTHON_BIN} setup.py bdist_wheel
+
+BUILD_END=$(date +%s)
+BUILD_ELAPSED=$((BUILD_END - BUILD_START))
+BUILD_MIN=$((BUILD_ELAPSED / 60))
 
 echo ""
-echo "--- Build complete ---"
-ls -lh dist/
+echo "============================================"
+echo " BUILD COMPLETE"
+echo " Duration: ${BUILD_MIN} minutes"
+echo "============================================"
 
-# Write the binary env file (PyTorch convention)
-# In production, this is sourced by downstream test/upload scripts
-BINARY_ENV_FILE="${BINARY_ENV_FILE:-/tmp/env}"
-cat > "${BINARY_ENV_FILE}" << EOF
-PYTHON_VERSION=${PYTHON_VERSION}
-CUDA_VERSION=${CUDA_VERSION}
-PACKAGE_TYPE=${PACKAGE_TYPE}
-BUILD_ENVIRONMENT=${BUILD_ENV}
-WHEEL_DIR=${GITHUB_WORKSPACE:-.}/demo-pytorch/dist
-EOF
+# ---- Show results ----
+echo ""
+echo "--- Built wheels ---"
+ls -lh "${PYTORCH_DIR}/dist/" 2>/dev/null || echo "  (no wheels found)"
 
-echo "Binary env written to ${BINARY_ENV_FILE}"
+# Show ccache stats
+if command -v ccache &>/dev/null; then
+    echo ""
+    echo "--- ccache statistics ---"
+    ccache -s 2>/dev/null || true
+fi
+
+echo ""
+echo "Wheel location: ${PYTORCH_DIR}/dist/"
