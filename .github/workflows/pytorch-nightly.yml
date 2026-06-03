@@ -61,10 +61,22 @@ on:
         required: false
         type: choice
         options:
-          - '1'
           - '2'
           - '4'
-        default: '2'
+          - '6'
+          - '8'
+          - '12'
+        default: '6'
+      runner:
+        description: 'GitHub Actions runner size (larger = faster, needs paid plan)'
+        required: false
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-latest-4
+          - ubuntu-latest-8
+          - ubuntu-latest-16
+        default: ubuntu-latest-4
       pytorch-ref:
         description: 'PyTorch git ref (branch, tag, or commit SHA)'
         required: false
@@ -91,7 +103,7 @@ concurrency:
 env:
   BUILD_ENVIRONMENT: linux-binary-manywheel
   PACKAGE_TYPE: ${{ inputs.package-type || 'manywheel' }}
-  MAX_JOBS: ${{ inputs.max-jobs || '2' }}
+  MAX_JOBS: ${{ inputs.max-jobs || '6' }}
   PYTORCH_REF: ${{ inputs.pytorch-ref || 'main' }}
 
 jobs:
@@ -155,12 +167,12 @@ jobs:
 #   MAX_JOBS        → limits parallel compilation (2 for 7 GB runner)
 #
 # Real PyTorch CI uses linux.12xlarge runners (72 vCPU, 144 GB).
-# We use ubuntu-latest (2 vCPU, 7 GB) — build takes 2–4 hours instead of
-# 30 minutes, but produces the identical wheel.
+# We default to ubuntu-latest-4 (4 vCPU, 16 GB) for faster builds.
+# Override via workflow_dispatch → runner input.
 # ===========================================================================
   build:
     needs: generate-matrix
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner || 'ubuntu-latest-4' }}
     strategy:
       matrix: ${{ fromJson(needs.generate-matrix.outputs.build-matrix) }}
       fail-fast: false
@@ -172,7 +184,7 @@ jobs:
     env:
       DESIRED_PYTHON: ${{ matrix.python_version }}
       DESIRED_CUDA: ${{ matrix.cuda_version }}
-      MAX_JOBS: ${{ inputs.max-jobs || '2' }}
+      MAX_JOBS: ${{ inputs.max-jobs || '6' }}
 
     steps:
       # ---- Checkout workflow repo (for build script) ----
