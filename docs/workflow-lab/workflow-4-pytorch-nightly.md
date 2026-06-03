@@ -124,7 +124,7 @@ python generate_nightly_matrix.py \
       "python_abi": "cp310-cp310",
       "cuda_version": "cpu",
       "cuda_display": "cpu",
-      "container": "quay.io/pypa/manylinux_2_28_x86_64:2025-03-24-e43cb71"
+      "container": "quay.io/pypa/manylinux_2_28_x86_64:latest"
     },
     {
       "build_name": "manywheel-py3_10-cu124",
@@ -132,7 +132,7 @@ python generate_nightly_matrix.py \
       "python_abi": "cp310-cp310",
       "cuda_version": "cu124",
       "cuda_display": "cuda12.4",
-      "container": "quay.io/pypa/manylinux_2_28_x86_64:2025-03-24-e43cb71"
+      "container": "quay.io/pypa/manylinux_2_28_x86_64:latest"
     }
   ]
 }

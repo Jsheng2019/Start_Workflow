@@ -253,7 +253,7 @@ jobs:
 #   - Timeout is 240+ minutes per variant
 # ===========================================================================
   test:
-    needs: build
+    needs: [generate-matrix, build]
     runs-on: ubuntu-latest
     strategy:
       matrix: ${{ fromJson(needs.generate-matrix.outputs.build-matrix) }}
