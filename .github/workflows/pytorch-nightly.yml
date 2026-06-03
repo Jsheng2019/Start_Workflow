@@ -272,61 +272,126 @@ jobs:
           pip install dist/*.whl
           pip install pytest numpy
 
-      - name: Smoke test — import and basic ops
+      - name: Smoke test — comprehensive runtime validation
         run: |
           python3 << 'PYEOF'
-          import sys, os
+          import sys, os, io, tempfile, time
 
-          print("=== PyTorch Smoke Test ===")
+          print("=== PyTorch Comprehensive Smoke Test ===")
+          print(f"Python: {sys.version}")
+          start_time = time.time()
+          tests = []
 
-          # 1. Import — verifies the C extension (_C.so) loaded
+          # ---- 1. Import + version ----
           import torch
-          print(f"torch imported OK")
-
-          # 2. Version — verifies build metadata
-          print(f"version:      {torch.__version__}")
+          print(f"[1/12] import torch ................. OK")
+          print(f"       version: {torch.__version__}")
           assert torch.__version__ is not None
           assert "dev" in torch.__version__ or len(torch.__version__) > 0
+          tests.append("import+version")
 
-          # 3. CUDA status — must match build variant
+          # ---- 2. CUDA status ----
           cuda_available = torch.cuda.is_available()
           expected_cuda = "${{ matrix.cuda_version }}" != "cpu"
-          print(f"cuda:         {cuda_available} (expected: {expected_cuda})")
+          print(f"[2/12] CUDA: {cuda_available} (expected: {expected_cuda})")
           assert cuda_available == expected_cuda, \
               f"CUDA mismatch: build=${{ matrix.cuda_version }}, runtime={cuda_available}"
+          tests.append("cuda_check")
 
-          # 4. Core tensor ops — verifies the C++ math library works
-          x = torch.randn(100, 100)
+          # ---- 3. Large tensor ops (1000x1000 matmul) ----
+          x = torch.randn(1000, 1000)
           y = torch.mm(x, x.t())
-          print(f"tensor ops:   OK (matmul 100x100)")
+          assert y.shape == (1000, 1000)
+          print(f"[3/12] matmul 1000x1000 ............. OK (shape: {y.shape})")
+          tests.append("matmul")
 
-          # 5. Autograd — verifies the autograd engine works
-          w = torch.randn(10, 10, requires_grad=True)
+          # ---- 4. Conv2d — verifies convolution kernels ----
+          conv = torch.nn.Conv2d(3, 16, 3, padding=1)
+          img = torch.randn(4, 3, 64, 64)
+          out = conv(img)
+          assert out.shape == (4, 16, 64, 64), f"Expected (4,16,64,64), got {out.shape}"
+          print(f"[4/12] Conv2d 3→16, 64x64 ........... OK (output: {out.shape})")
+          tests.append("conv2d")
+
+          # ---- 5. BatchNorm ----
+          bn = torch.nn.BatchNorm2d(16)
+          out_bn = bn(out)
+          assert out_bn.shape == out.shape
+          print(f"[5/12] BatchNorm2d ................... OK")
+          tests.append("batchnorm")
+
+          # ---- 6. Autograd — backward pass ----
+          w = torch.randn(50, 50, requires_grad=True)
           loss = (w ** 2).sum()
           loss.backward()
           assert w.grad is not None
-          print(f"autograd:     OK (grad shape: {w.grad.shape})")
+          assert w.grad.shape == w.shape
+          print(f"[6/12] autograd backward ............. OK (grad: {w.grad.shape})")
+          tests.append("autograd")
 
-          # 6. nn.Module — verifies the neural network layer works
-          linear = torch.nn.Linear(10, 5)
-          out = linear(torch.randn(3, 10))
-          assert out.shape == (3, 5), f"Expected (3,5), got {out.shape}"
-          print(f"nn.Module:    OK (Linear 10→5, batch=3)")
+          # ---- 7. Multi-layer network forward+backward ----
+          model = torch.nn.Sequential(
+              torch.nn.Linear(128, 64),
+              torch.nn.ReLU(),
+              torch.nn.Dropout(0.1),
+              torch.nn.Linear(64, 10),
+          )
+          x = torch.randn(32, 128)
+          target = torch.randint(0, 10, (32,))
+          output = model(x)
+          loss = torch.nn.functional.cross_entropy(output, target)
+          loss.backward()
+          for name, param in model.named_parameters():
+              assert param.grad is not None, f"{name} has no gradient"
+          print(f"[7/12] Sequential(128→64→10) ........ OK (loss: {loss.item():.4f})")
+          tests.append("sequential")
 
-          # 7. Serialization — verifies state_dict works
-          import io
-          buf = io.BytesIO()
-          torch.save(linear.state_dict(), buf)
-          buf.seek(0)
-          loaded = torch.load(buf)
-          print(f"serialize:    OK")
+          # ---- 8. Optimizer — training step ----
+          opt = torch.optim.SGD(model.parameters(), lr=0.01)
+          before = sum(p.data.sum().item() for p in model.parameters())
+          opt.step()
+          after = sum(p.data.sum().item() for p in model.parameters())
+          assert before != after, "optimizer.step() did not update parameters"
+          print(f"[8/12] optimizer.step() .............. OK (Δ={abs(after-before):.6f})")
+          tests.append("optimizer")
 
-          # 8. CPU info
-          print(f"cpu count:    {torch.get_num_threads()}")
-          print(f"mkl available:{torch.backends.mkl.is_available() if hasattr(torch.backends, 'mkl') else 'N/A'}")
+          # ---- 9. Serialization to disk ----
+          tmp = tempfile.mktemp(suffix=".pt")
+          torch.save(model.state_dict(), tmp)
+          assert os.path.exists(tmp), f"Saved file not found: {tmp}"
+          file_size = os.path.getsize(tmp)
+          loaded = torch.load(tmp, weights_only=True)
+          assert len(loaded) == len(list(model.state_dict().keys()))
+          os.unlink(tmp)
+          print(f"[9/12] torch.save/load to disk ...... OK ({file_size} bytes)")
+          tests.append("serialize")
 
+          # ---- 10. DataLoader — verifies data pipeline ----
+          dataset = torch.utils.data.TensorDataset(
+              torch.randn(100, 10), torch.randint(0, 2, (100,))
+          )
+          loader = torch.utils.data.DataLoader(dataset, batch_size=16, shuffle=True)
+          batch_x, batch_y = next(iter(loader))
+          assert batch_x.shape == (16, 10)
+          print(f"[10/12] DataLoader ................... OK (batch: {batch_x.shape})")
+          tests.append("dataloader")
+
+          # ---- 11. CPU info ----
+          print(f"[11/12] CPU threads: {torch.get_num_threads()}")
+          print(f"       MKL available: {torch.backends.mkl.is_available() if hasattr(torch.backends, 'mkl') else 'N/A'}")
+          print(f"       BLAS: {torch.backends.mkldnn.is_available() if hasattr(torch.backends, 'mkldnn') else 'checking...'}")
+          tests.append("cpu_info")
+
+          # ---- 12. dtype + device coverage ----
+          for dtype in [torch.float32, torch.float64, torch.int64, torch.bool]:
+              t = torch.ones(3, dtype=dtype)
+              assert t.dtype == dtype
+          print(f"[12/12] dtype coverage (f32/f64/i64/bool) OK")
+          tests.append("dtypes")
+
+          elapsed = time.time() - start_time
           print()
-          print("=== ALL SMOKE TESTS PASSED ===")
+          print(f"=== ALL {len(tests)} SMOKE TESTS PASSED ({elapsed:.1f}s) ===")
           PYEOF
 
       - name: Test summary
