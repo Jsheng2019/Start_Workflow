@@ -14,6 +14,7 @@
 # Environment variables (set by the workflow):
 #   DESIRED_PYTHON       - Target Python version (e.g., "3.12")
 #   DESIRED_CUDA         - CUDA variant (e.g., "cpu", "cu124")
+#   PYTORCH_REF          - PyTorch git ref (branch/tag/commit, default: main)
 #   MAX_JOBS             - Parallel compile jobs (default: 2)
 #   PYTORCH_BUILD_VERSION - Version string override (auto-generated if unset)
 # =============================================================================
@@ -33,6 +34,7 @@ echo " Python:        ${PYTHON_VERSION}  (${PY_SHORT})"
 echo " CUDA variant:  ${CUDA_VERSION}"
 echo " Max jobs:      ${MAX_JOBS:-2}"
 echo " Build env:     ${BUILD_ENVIRONMENT:-linux-binary-manywheel}"
+echo " PyTorch ref:   ${PYTORCH_REF:-main}"
 echo " Python path:   ${PYTHON_BIN}"
 echo "============================================"
 
@@ -45,12 +47,15 @@ fi
 
 ${PYTHON_BIN} --version
 
+# ---- Git safe.directory (container runs as root, workspace owned by host user) ----
+git config --global --add safe.directory '*'
+
 # ---- Clone PyTorch source ----
 PYTORCH_DIR="${GITHUB_WORKSPACE:-/tmp}/pytorch-src"
 if [ ! -f "${PYTORCH_DIR}/CMakeLists.txt" ]; then
     echo ""
-    echo "--- Cloning PyTorch (depth=1, branch=main) ---"
-    git clone --depth=1 --branch=main --single-branch \
+    echo "--- Cloning PyTorch (depth=1, ref=${PYTORCH_REF:-main}) ---"
+    git clone --depth=1 --branch="${PYTORCH_REF:-main}" --single-branch \
         https://github.com/pytorch/pytorch.git "${PYTORCH_DIR}"
     echo "Clone complete ($(du -sh "${PYTORCH_DIR}" | cut -f1))"
 else
@@ -68,10 +73,11 @@ echo "PyTorch dir size: $(du -sh . 2>/dev/null | cut -f1)"
 # ---- Initialize minimal submodules ----
 echo ""
 echo "--- Initializing submodules ---"
-# PyTorch needs these submodules even for CPU builds
+# CPU build needs these submodules; eigen is the most critical (ATen tensor ops)
 git submodule update --init --depth=1 --jobs=2 \
     third_party/pybind11 \
     third_party/cpuinfo \
+    third_party/eigen \
     third_party/FP16 \
     third_party/FXdiv \
     third_party/pthreadpool \
@@ -83,7 +89,8 @@ git submodule update --init --depth=1 --jobs=2 \
 # ---- Set build version ----
 if [ -z "${PYTORCH_BUILD_VERSION:-}" ]; then
     if [ -f version.txt ]; then
-        BASE_VER=$(head -1 version.txt | sed 's/a.*//')
+        # Robustly extract X.Y.Z from version.txt (e.g. "2.8.0a0" → "2.8.0")
+        BASE_VER=$(head -1 version.txt | sed -E 's/([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
     else
         BASE_VER="2.8.0"
     fi
@@ -110,23 +117,27 @@ fi
 # Ensure pip-installed binaries (cmake) are in PATH
 PIP_BIN_DIR="$(dirname ${PYTHON_BIN})"
 export PATH="${PIP_BIN_DIR}:${PATH}"
-echo "cmake: $(which cmake 2>/dev/null && cmake --version | head -1 || echo 'not found')"
+echo "cmake: $(cmake --version 2>/dev/null | head -1 || echo 'not found')"
 
 # ---- Install build dependencies ----
 echo ""
 echo "--- Installing build dependencies ---"
 ${PYTHON_BIN} -m pip install --quiet --upgrade pip
-${PYTHON_BIN} -m pip install --quiet -r requirements.txt 2>&1 | tail -5
+${PYTHON_BIN} -m pip install --quiet -r requirements.txt
 ${PYTHON_BIN} -m pip install --quiet build wheel setuptools
 
 # ---- Configure ccache (if available) ----
+# Use GITHUB_WORKSPACE for ccache so it's shared between host and container
+CCACHE_DIR="${GITHUB_WORKSPACE:-/tmp}/.ccache"
+export CCACHE_DIR
+mkdir -p "${CCACHE_DIR}"
+
 if command -v ccache &>/dev/null; then
-    export CCACHE_DIR="${CCACHE_DIR:-${HOME}/.ccache}"
     ccache -M 2G 2>/dev/null || true
     ccache -z 2>/dev/null || true
     export CMAKE_C_COMPILER_LAUNCHER=ccache
     export CMAKE_CXX_COMPILER_LAUNCHER=ccache
-    echo "ccache: $(ccache -V 2>/dev/null | head -1), max: $(ccache -M 2>/dev/null || echo '2G')"
+    echo "ccache: $(ccache -V 2>/dev/null | head -1), max: $(ccache -M 2>/dev/null || echo '2G'), dir: ${CCACHE_DIR}"
 fi
 
 # ---- Build environment variables ----
@@ -145,12 +156,18 @@ export CMAKE_BUILD_TYPE=Release
 export ATEN_THREADING=NATIVE
 export USE_GOLD_LINKER=ON
 
+# Help PyTorch CMake find conda-installed libraries (MKL, etc.)
+if [ -d /opt/conda ]; then
+    export CMAKE_PREFIX_PATH=/opt/conda
+fi
+
 echo ""
 echo "Build configuration:"
 echo "  USE_CUDA=${USE_CUDA}"
 echo "  BUILD_TEST=${BUILD_TEST}"
 echo "  MAX_JOBS=${MAX_JOBS}"
 echo "  CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+echo "  CCACHE_DIR=${CCACHE_DIR}"
 
 # ---- BUILD ----
 echo ""
@@ -168,8 +185,6 @@ BUILD_START=$(date +%s)
 ${PYTHON_BIN} setup.py clean 2>/dev/null || true
 
 # Build the wheel
-# We use setup.py bdist_wheel (traditional method) rather than
-# python -m build because it gives more control over the build process.
 ${PYTHON_BIN} setup.py bdist_wheel
 
 BUILD_END=$(date +%s)
