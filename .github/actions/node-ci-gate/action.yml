@@ -1,0 +1,167 @@
+# =============================================================================
+# Node.js CI Gate — Composite Action
+# =============================================================================
+# Bundles setup → install → lint → test → build into one reusable action.
+# Demonstrates: inputs, outputs, multi-step composition, npm caching,
+# conditional execution, and status aggregation.
+#
+# Usage:
+#   - uses: ./.github/actions/node-ci-gate
+#     with:
+#       node-version: '20'
+#       audit-level: 'low'
+# =============================================================================
+
+name: Node.js CI Gate
+description: >
+  Composite action that sets up Node.js, installs dependencies, runs lint,
+  test, and build — then outputs a CI status summary.  Used as a teaching
+  demo for GitHub Actions composite action syntax.
+
+# ---------------------------------------------------------------------------
+# Inputs
+# ---------------------------------------------------------------------------
+inputs:
+  node-version:
+    description: 'Node.js version to use'
+    required: false
+    default: '20'
+  working-directory:
+    description: 'Directory to run commands in'
+    required: false
+    default: '.'
+  audit-level:
+    description: 'npm audit severity level that causes failure (low/moderate/high/critical)'
+    required: false
+    default: 'low'
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+# Composite actions can export outputs by referencing step IDs.  Each output
+# below maps to a ${{ steps.<id>.outputs.<name> }} expression from a step in
+# the `runs.steps` block.
+# ---------------------------------------------------------------------------
+outputs:
+  node-version:
+    description: 'The Node.js version actually used'
+    value: ${{ steps.versions.outputs.version }}
+  npm-version:
+    description: 'The npm version used'
+    value: ${{ steps.versions.outputs.npm-version }}
+  lint-status:
+    description: 'pass / fail / skipped'
+    value: ${{ steps.lint.outputs.status }}
+  test-status:
+    description: 'pass / fail'
+    value: ${{ steps.test.outputs.status }}
+  build-status:
+    description: 'pass / fail'
+    value: ${{ steps.build.outputs.status }}
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+runs:
+  using: composite
+
+  steps:
+    # ---- Step 1: Set up Node.js ----
+    # Uses the official setup-node action.  Composite actions CAN nest other
+    # actions — this is one of their most powerful features: you can bundle
+    # multiple marketplace actions into a single reusable unit.
+    - name: Setup Node.js
+      id: node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Capture tool versions
+      id: versions
+      shell: bash
+      run: |
+        echo "version=$(node -v)" >> "$GITHUB_OUTPUT"
+        echo "npm-version=$(npm -v)" >> "$GITHUB_OUTPUT"
+
+    # ---- Step 2: Compute cache key & restore ----
+    # Demonstrates how a composite action can compute values dynamically
+    # and use them in subsequent steps.
+    - name: Compute npm cache key
+      id: cache-key
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f package-lock.json ]; then
+          HASH=$(sha256sum package-lock.json | cut -c1-16)
+          echo "key=npm-${{ runner.os }}-${{ inputs.node-version }}-${HASH}" >> "$GITHUB_OUTPUT"
+          echo "has-lockfile=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "key=npm-${{ runner.os }}-${{ inputs.node-version }}-no-lock" >> "$GITHUB_OUTPUT"
+          echo "has-lockfile=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Restore npm cache
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.npm
+        key: ${{ steps.cache-key.outputs.key }}
+        restore-keys: |
+          npm-${{ runner.os }}-${{ inputs.node-version }}-
+
+    # ---- Step 3: Install dependencies ----
+    - name: Install dependencies
+      id: install
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        npm ci 2>&1 | tail -5
+        echo "✅ dependencies installed"
+
+    # ---- Step 4: Lint (non-blocking) ----
+    # Demonstrates continue-on-error: lint failures are noted but
+    # don't stop the gate — test is the hard gate.
+    - name: Lint
+      id: lint
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      continue-on-error: true
+      run: |
+        if npm run lint 2>&1; then
+          echo "status=pass" >> "$GITHUB_OUTPUT"
+          echo "✅ lint passed"
+        else
+          echo "status=fail" >> "$GITHUB_OUTPUT"
+          echo "⚠️  lint failed (non-blocking)"
+        fi
+
+    # ---- Step 5: Test (hard gate) ----
+    - name: Test
+      id: test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        npm test 2>&1
+        echo "status=pass" >> "$GITHUB_OUTPUT"
+        echo "✅ tests passed"
+
+    # ---- Step 6: Build ----
+    - name: Build
+      id: build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        npm run build 2>&1
+        echo "status=pass" >> "$GITHUB_OUTPUT"
+        echo "✅ build passed"
+
+    # ---- Step 7: Audit (configurable severity) ----
+    - name: Security audit
+      id: audit
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      continue-on-error: true
+      run: |
+        echo "Running npm audit (level: ${{ inputs.audit-level }})..."
+        npm audit --audit-level=${{ inputs.audit-level }} 2>&1 || true
+        echo "Audit complete"

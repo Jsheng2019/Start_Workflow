@@ -1,0 +1,109 @@
+# =============================================================================
+# Demo: Composite Action — Node.js CI Gate
+# =============================================================================
+# Demonstrates how to use a composite action (node-ci-gate) that bundles
+# setup → install → lint → test → build into a single reusable step.
+#
+# Key concepts shown:
+#   1. Composite action invocation via `uses: ./.github/actions/<name>`
+#   2. Passing inputs to a composite action
+#   3. Consuming outputs from a composite action
+#   4. Matrix strategy — running the same action across Node versions
+#   5. Post-matrix aggregation — collecting outputs from all matrix jobs
+#
+# Trigger: workflow_dispatch (manual) — no automatic triggers.
+# =============================================================================
+
+name: Demo - Composite Action
+
+on:
+  workflow_dispatch:
+    inputs:
+      node-versions:
+        description: 'Node.js versions (space-separated JSON array, e.g. ["18","20","22"])'
+        required: false
+        type: string
+        default: '["18", "20", "22"]'
+      audit-level:
+        description: 'npm audit severity threshold'
+        required: false
+        type: choice
+        options:
+          - low
+          - moderate
+          - high
+          - critical
+        default: low
+
+permissions:
+  contents: read
+
+# ---------------------------------------------------------------------------
+# Job 1: ci-gate (matrix) — Run the composite action per Node version
+# ---------------------------------------------------------------------------
+jobs:
+  ci-gate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ${{ fromJson(inputs.node-versions) }}
+      fail-fast: false   # Don't cancel other versions if one fails
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── The composite action invocation ────────────────────────────
+      # This single `uses` line replaces ~7 steps (setup, cache, install,
+      # lint, test, build, audit).  All inputs are optional — defaults
+      # to Node 20, working-directory '.', audit-level 'low'.
+      # ────────────────────────────────────────────────────────────────
+      - name: Run CI gate
+        id: gate
+        uses: ./.github/actions/node-ci-gate
+        with:
+          node-version: ${{ matrix.node-version }}
+          audit-level: ${{ inputs.audit-level }}
+
+      # ── Consume the composite action's outputs ─────────────────────
+      # Outputs are accessed via steps.<id>.outputs.<name>, same as
+      # any other action.
+      # ────────────────────────────────────────────────────────────────
+      - name: Show gate results
+        run: |
+          echo "### CI Gate — Node ${{ matrix.node-version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Check | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Lint  | ${{ steps.gate.outputs.lint-status }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Test  | ${{ steps.gate.outputs.test-status }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build | ${{ steps.gate.outputs.build-status }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo ""
+          echo "Node: ${{ steps.gate.outputs.node-version }}"
+          echo "npm:  ${{ steps.gate.outputs.npm-version }}"
+
+# ---------------------------------------------------------------------------
+# Job 2: summary — Aggregate results from all matrix jobs
+# ---------------------------------------------------------------------------
+# Shows how to collect outputs after a matrix completes.  Uses always()
+# so the summary runs even when some Node versions failed.
+# ---------------------------------------------------------------------------
+  summary:
+    needs: ci-gate
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Final summary
+        run: |
+          echo "# Composite Action Demo — Results" >> "$GITHUB_STEP_SUMMARY"
+          echo ""
+          echo "**Action:** \`.github/actions/node-ci-gate\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Matrix:** ${{ inputs.node-versions }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Overall:** ${{ needs.ci-gate.result }}" >> "$GITHUB_STEP_SUMMARY"
+          echo ""
+          echo "## What this demo shows" >> "$GITHUB_STEP_SUMMARY"
+          echo ""
+          echo "1. **Composite action bundles 7 steps into 1** — \`uses: ./.github/actions/node-ci-gate\` replaces setup, cache, install, lint, test, build, and audit steps." >> "$GITHUB_STEP_SUMMARY"
+          echo "2. **Inputs are declared in \`action.yml\`** — \`node-version\`, \`working-directory\`, \`audit-level\` are all configurable with defaults." >> "$GITHUB_STEP_SUMMARY"
+          echo "3. **Outputs are exported by step ID** — e.g. \`lint-status\` maps to \`steps.lint.outputs.status\` inside the composite action." >> "$GITHUB_STEP_SUMMARY"
+          echo "4. **Matrix × composite** — The same action runs across Node 18/20/22 in parallel." >> "$GITHUB_STEP_SUMMARY"
+          echo "5. **Composite actions CAN nest other actions** — \`actions/setup-node\` and \`actions/cache\` are called from within the composite." >> "$GITHUB_STEP_SUMMARY"
+          echo ""
+          echo "See \`docs/workflow-lab/workflow-5-composite-action.md\` for the full guide." >> "$GITHUB_STEP_SUMMARY"
