@@ -2,7 +2,16 @@ name: Notify Email
 
 # workflow_run 观察者模式：监听全仓所有 workflow 的完成事件，
 # 自动携带那次 run 的状态 / commit / 分支 / 耗时 / 链接并发送邮件。
-# 收件人由仓库变量 MAIL_TO 配置（Settings → Secrets and variables → Actions → Variables）。
+#
+# 配置（Settings → Secrets and variables → Actions）：
+#   Variables:
+#     MAIL_TO           收件人，逗号分隔（必填）
+#     MAIL_FROM         发件邮箱（必填）
+#     NOTIFY_WORKFLOWS  可选，只监控的 workflow 名清单（逗号分隔，按 name 精确匹配）；
+#                       留空/未配置 = 监控全部
+#     MAIL_CC / MAIL_SUBJECT / SMTP_HOST / SMTP_PORT / SMTP_USER  可选
+#   Secrets:
+#     SMTP_PASSWORD     SMTP 授权码（必填；不是登录密码）
 
 on:
   workflow_run:
@@ -13,15 +22,53 @@ permissions: {} # 纯发邮件，不需要任何 token 权限
 
 jobs:
   notify:
-    # 只对成功 / 失败发通知（跳过取消等），并排除自身 run 防自环；
-    # 手动触发（workflow_dispatch）不受过滤，用于测试。
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.path != '.github/workflows/notify-email.yml' && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure'))
+    # 只对成功 / 失败发通知（跳过取消等）；手动触发（workflow_dispatch）不受过滤，用于测试
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
     runs-on: ubuntu-latest
     steps:
+      # ── 过滤：排除自身 run + 按 NOTIFY_WORKFLOWS 清单精确匹配（留空=全部）──
+      - name: Filter watched workflows
+        id: guard
+        env:
+          WATCHED: ${{ vars.NOTIFY_WORKFLOWS }}
+          RUN_NAME: ${{ github.event.workflow_run.name }}
+          RUN_PATH: ${{ github.event.workflow_run.path }}
+        run: |
+          # 1) 排除自身，防自环
+          if [ "$RUN_PATH" = ".github/workflows/notify-email.yml" ]; then
+            echo "guard: 自身 run，跳过"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 2) 清单为空 = 监控全部
+          if [ -z "${WATCHED//[[:space:]],/}" ]; then
+            echo "guard: NOTIFY_WORKFLOWS 未配置，监控全部 → $RUN_NAME"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 3) 精确匹配（忽略条目内空白）
+          skip=true
+          IFS=',' read -ra arr <<< "$WATCHED"
+          for item in "${arr[@]}"; do
+            item="${item//[[:space:]]/}"
+            [ -z "$item" ] && continue
+            if [ "$item" = "$RUN_NAME" ]; then
+              skip=false
+              echo "guard: 命中监听清单 → $RUN_NAME"
+              break
+            fi
+          done
+          if [ "$skip" = "true" ]; then
+            echo "guard: 不在监听清单，跳过 → $RUN_NAME"
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
+        if: steps.guard.outputs.skip != 'true'
         uses: actions/checkout@v4
 
       - name: Send notification email
+        if: steps.guard.outputs.skip != 'true'
         env:
           # ── 邮件配置：收发件人与 SMTP（授权码必须走 secrets）──
           MAIL_FROM: ${{ vars.MAIL_FROM }}
