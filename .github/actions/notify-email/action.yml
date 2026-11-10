@@ -1,0 +1,60 @@
+name: 'Notify Email'
+description: >-
+  发送状态卡片风 HTML 邮件，报告当前 workflow 的执行状态、commit、分支等信息。
+  在任意 workflow 的最后一步调用，配合 if: always() 使用，保证成功/失败都会推送。
+  注意：composite action 内部无法读取 secrets/vars，需由调用方通过 with: 显式传入。
+inputs:
+  status:
+    description: '要报告的 job 结论：success / failure / cancelled（传 ${{ job.status }}）'
+    required: true
+  mail-to:
+    description: '收件人邮箱，多个用逗号分隔'
+    required: true
+  mail-from:
+    description: '发件邮箱（163 要求与 SMTP 登录账号一致）'
+    required: true
+  smtp-password:
+    description: 'SMTP 授权码（放 secrets）'
+    required: true
+  smtp-host:
+    description: 'SMTP 服务器，缺省 smtp.163.com'
+    required: false
+    default: 'smtp.163.com'
+  smtp-port:
+    description: 'SMTP 端口，缺省 465（SSL）；其他端口走 STARTTLS'
+    required: false
+    default: '465'
+  smtp-user:
+    description: 'SMTP 登录用户名，缺省同 mail-from'
+    required: false
+  subject-prefix:
+    description: '邮件主题前缀，缺省为仓库名'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - id: send
+      shell: bash
+      env:
+        # ── 调用方输入（显式映射，避免依赖 INPUT_* 自动命名）──
+        INPUT_STATUS: ${{ inputs.status }}
+        INPUT_MAIL_TO: ${{ inputs.mail-to }}
+        INPUT_MAIL_FROM: ${{ inputs.mail-from }}
+        INPUT_SMTP_PASSWORD: ${{ inputs.smtp-password }}
+        INPUT_SMTP_HOST: ${{ inputs.smtp-host }}
+        INPUT_SMTP_PORT: ${{ inputs.smtp-port }}
+        INPUT_SMTP_USER: ${{ inputs.smtp-user }}
+        INPUT_SUBJECT_PREFIX: ${{ inputs.subject-prefix }}
+        # ── 运行上下文：action 自动携带，调用方零成本 ──
+        CTX_REPO: ${{ github.repository }}
+        CTX_WORKFLOW: ${{ github.workflow }}
+        CTX_SHA: ${{ github.sha }}
+        CTX_BRANCH: ${{ github.head_ref || github.ref_name }}
+        CTX_ACTOR: ${{ github.actor }}
+        CTX_EVENT: ${{ github.event_name }}
+        CTX_RUN_NUMBER: ${{ github.run_number }}
+        CTX_RUN_ID: ${{ github.run_id }}
+        CTX_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        CTX_COMMIT_TIME: ${{ github.event.head_commit.timestamp }}
+      run: python3 "$GITHUB_ACTION_PATH/scripts/send_mail.py"

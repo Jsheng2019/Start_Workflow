@@ -1,0 +1,44 @@
+name: hello world
+
+# 调用 notify-email composite action 的演示/验证 workflow：
+# - 默认执行成功 → 收到绿色成功卡片邮件
+# - 手动触发时勾选 simulate_failure → 模拟执行失败 → 收到红色失败卡片邮件
+# 无论主流程成败，最后一步（if: always()）都会推送通知。
+
+on:
+  workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: "模拟执行失败（验证失败通知邮件）"
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Hello world
+        run: echo "hello world"
+
+      # 可选：验证失败通知时勾选 simulate_failure
+      - name: 模拟执行失败
+        if: ${{ inputs.simulate_failure }}
+        run: |
+          echo "simulate_failure=true → 故意失败，用于验证失败通知邮件"
+          exit 1
+
+      # 无论上面成功还是失败，都会执行（if: always()）
+      - name: Notify (email)
+        if: always()
+        uses: ./.github/actions/notify-email
+        with:
+          status: ${{ job.status }}
+          mail-from: ${{ vars.MAIL_FROM }}
+          mail-to: ${{ vars.MAIL_TO }}
+          smtp-password: ${{ secrets.SMTP_PASSWORD }}
