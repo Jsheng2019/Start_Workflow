@@ -166,7 +166,7 @@ def main():
         "run_url": env("CTX_RUN_URL"),
         "commit_time": env("CTX_COMMIT_TIME"),
     }
-    emoji, text = conclusion_display(data["status"])
+    emoji, text, _, _ = conclusion_display(data["status"])
     prefix = env("INPUT_SUBJECT_PREFIX") or data["repo"]
     subject = f"[{prefix}] {emoji} {text} {data['workflow']} #{data['run_number']}"
 
