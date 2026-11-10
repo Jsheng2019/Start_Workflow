@@ -5,7 +5,7 @@ description: >-
   注意：composite action 内部无法读取 secrets/vars，需由调用方通过 with: 显式传入。
 inputs:
   status:
-    description: '要报告的 job 结论：success / failure / cancelled（传 ${{ job.status }}）'
+    description: '要报告的 job 结论：success / failure / cancelled（调用方推荐传 job.status）'
     required: true
   mail-to:
     description: '收件人邮箱，多个用逗号分隔'
