@@ -1,5 +1,5 @@
 # Multi-stage build for Start_Workflow Node.js app
-# Supports linux/amd64 and linux/arm64
+# Supports linux/amd64 and linux/arm64 test
 
 # ---- Stage 1: Build -------------------------------------------------------
 FROM node:20-alpine AS builder
