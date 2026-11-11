@@ -80,6 +80,8 @@ def text_body(data):
         "",
         "（本邮件由 GitHub Actions 自动发送）",
     ]
+    if data.get("pr_number"):
+        lines.insert(10, f"PR       : #{data['pr_number']} {data.get('pr_title') or ''}")
     return "\n".join(lines)
 
 
