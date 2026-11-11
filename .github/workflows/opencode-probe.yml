@@ -1,0 +1,92 @@
+name: OpenCode Probe
+
+# 临时验证：GitHub Actions 里用 opencode（agent CLI）接火山 AI 网关。
+# 验证点：① 安装成功 ② 网关认证通过 ③ 工具调用可用（读文件）④ 写文件可用
+# 验证通过后可删除此 workflow。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install opencode
+        run: |
+          npm i -g opencode-ai@1.19.5 --silent
+          opencode --version
+
+      - name: Configure custom provider (volcano gateway)
+        env:
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          if [ -z "$LLM_API_KEY" ]; then echo "FAIL: LLM_API_KEY 未注入"; exit 1; fi
+          cat > opencode.json << JSONEOF
+          {
+            "\$schema": "https://opencode.ai/config.json",
+            "model": "volcano/$LLM_MODEL",
+            "provider": {
+              "volcano": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Volcano Gateway",
+                "options": {
+                  "baseURL": "$LLM_BASE_URL",
+                  "apiKey": "$LLM_API_KEY"
+                },
+                "models": {
+                  "$LLM_MODEL": { "name": "$LLM_MODEL" }
+                }
+              }
+            }
+          }
+          JSONEOF
+          echo "配置已生成（key 已写入，长度 ${#LLM_API_KEY}）"
+          opencode models 2>/dev/null | grep -i volcano || echo "WARN: 模型列表未出现 volcano"
+
+      - name: "Test 1: 工具调用（读取真实文件并回答）"
+        env:
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+        run: |
+          set -o pipefail
+          ANSWER=$(timeout 240 opencode run -m "volcano/$LLM_MODEL" --auto \
+            "读取 .github/workflows/pr-gate.yml，用一行回答：notify 步骤调用的是哪个本地 action 路径？只输出路径。" 2>&1)
+          echo "--- agent 输出 ---"
+          echo "$ANSWER"
+          echo "--- 判定 ---"
+          if echo "$ANSWER" | grep -q "notify-email"; then
+            echo "✓ PASS: 工具调用成功（读到了真实文件内容）"
+          else
+            echo "✗ FAIL: 未从文件中获得正确信息"; exit 1
+          fi
+
+      - name: "Test 2: 写文件能力"
+        env:
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+        run: |
+          rm -f probe-output.txt
+          timeout 240 opencode run -m "volcano/$LLM_MODEL" --auto \
+            "在当前目录创建文件 probe-output.txt，内容写 'agent-write-ok'，不要做别的。" > /dev/null 2>&1 || true
+          if [ -f probe-output.txt ] && grep -q "agent-write-ok" probe-output.txt; then
+            echo "✓ PASS: 写文件成功 → $(cat probe-output.txt)"
+          else
+            echo "✗ FAIL: 文件未创建或内容不符"
+            ls -la probe-output.txt 2>/dev/null || echo "(文件不存在)"
+            exit 1
+          fi
+
+      - name: Cleanup workspace artifacts
+        if: always()
+        run: |
+          rm -f opencode.json probe-output.txt
+          echo "清理完成（opencode.json 含 key，不留在 workspace）"
