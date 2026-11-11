@@ -1,11 +1,11 @@
 name: PR Gate
 
 # 门禁流水线：向 main 提交 PR（新建 / 更新 / 重开）时触发。
-# 流程：hello world → AI 变更代码检视 → 回写 PR 评论 → 邮件通知（含检视结论）
+# 流程：hello world → AI 检视（opencode CLI + code-review skill）→ PR 评论 → 邮件
 #
 # AI 检视为「建议」性质，不阻塞合并：检视失败只降级为提示，不影响门禁结论。
-# 安全：使用 pull_request（非 pull_request_target）——同仓 PR 可用 secrets；
-# fork PR 拿不到 secrets，AI 检视与邮件均会优雅跳过。
+# 检视规范见 .opencode/skills/code-review/SKILL.md（业界通用路径，兼容 .claude/skills）。
+# 安全：pull_request（非 pull_request_target）——同仓 PR 可用 secrets；fork PR 优雅跳过。
 
 on:
   pull_request:
@@ -20,40 +20,127 @@ jobs:
   gate:
     name: Gate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
-      # runner 默认 UTC；设为北京时间，使脚本内 date/时间戳输出与本地一致
-      # 注意：日志行首的平台时间戳（...Z）由 runner 注入，不受此项影响，无法修改
       TZ: Asia/Shanghai
     steps:
       # 本地路径 action（./.github/actions/...）从 workspace 解析，必须先 checkout
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 取完整历史，便于 agent 做 git diff / 追溯上下文
 
-      # 门禁主体：只打印 hello world（本地产物为成功，用于演示门禁流程）
+      # 门禁主体：本地产物为成功（演示门禁流程）
       - name: Hello world
         run: echo "hello world"
 
-      # ── AI 检视：语法规范 / 缺陷 / 安全，结果写入文件供评论与邮件复用 ──
-      - name: AI review changed code
-        id: ai_review
-        continue-on-error: true # 检视失败不阻塞门禁
+      # ── 安装并配置 agent CLI ──
+      - name: Install opencode
+        id: install
+        continue-on-error: true
+        run: |
+          npm i -g opencode-ai@1.19.5 --silent
+          opencode --version
+
+      - name: Configure provider
+        if: steps.install.outcome == 'success'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
-          set -o pipefail
-          if ! python3 .github/scripts/ai_review.py ${{ github.event.pull_request.number }} 2>&1 | tee /tmp/ai-review.log; then
-            echo "AI-REVIEW-DEGRADED: 检视未完成，将在评论与邮件中提示"
-            printf 'AI 检视未完成（脚本异常）。请人工评审，或查看流水线日志中的 AI-REVIEW-FAILED 行。\n' \
-              > /tmp/ai-review-summary.txt
-            printf '<!-- ai-review -->\n\n### ⚠️ AI 检视未完成\n\n自动检视执行异常，请人工评审本次变更。\n\n<sub>详见流水线日志。</sub>\n' \
-              > /tmp/ai-review.md
+          if [ -z "$LLM_API_KEY" ]; then echo "SKIP: LLM_API_KEY 未配置"; exit 0; fi
+          cat > opencode.json << JSONEOF
+          {
+            "\$schema": "https://opencode.ai/config.json",
+            "model": "volcano/$LLM_MODEL",
+            "provider": {
+              "volcano": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Volcano Gateway",
+                "options": {
+                  "baseURL": "$LLM_BASE_URL",
+                  "apiKey": "$LLM_API_KEY"
+                },
+                "models": {
+                  "$LLM_MODEL": { "name": "$LLM_MODEL" }
+                }
+              }
+            }
+          }
+          JSONEOF
+
+      # ── AI 检视：agent 自主读 skill、取 diff、补上下文、产出报告 ──
+      - name: AI review (agent + skill)
+        id: ai_review
+        if: steps.install.outcome == 'success'
+        continue-on-error: true # 检视失败不阻塞门禁
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+        run: |
+          rm -f /tmp/ai-review.md /tmp/agent-run.log
+          PROMPT=$(cat <<'PROMPT_EOF'
+          你是代码检视员。开始前**必须先读**这两份文件并严格遵循：
+          1. .opencode/skills/code-review/SKILL.md（检视顺序、分级标准、输出格式）
+          2. .opencode/skills/code-review/references/security-checklist.md（安全检查项）
+
+          任务：检视本次 PR 的变更。
+          - 用 `gh pr diff $PR_NUM` 获取变更（GH_TOKEN 已配置）
+          - 只看变更部分；对改动的函数/接口，读取必要的调用方或依赖定义补充上下文
+          - 不要遍历整个仓库，只读与变更直接相关的文件
+
+          产出：用 Write 工具把最终报告写入 /tmp/ai-review.md。
+          - 第一行必须是 `<!-- ai-review -->`
+          - 严格按 SKILL.md 的 Markdown 格式，包含结论、必须修复、建议改进
+          - 报告本身就是交付物，不要在对话里额外解释
+          PROMPT_EOF
+          )
+          echo "=== 开始 agent 检视（PR #$PR_NUM）==="
+          set +e
+          timeout 900 opencode run -m "volcano/$LLM_MODEL" --auto "$PROMPT" 2>&1 | tee /tmp/agent-run.log
+          RC=$?
+          echo "=== agent 退出码: $RC ==="
+
+          # 双保险：优先读 agent 写的文件；否则从输出日志中提取报告片段
+          if [ ! -s /tmp/ai-review.md ] && grep -q '<!-- ai-review -->' /tmp/agent-run.log 2>/dev/null; then
+            echo "提示：agent 未写文件，从日志提取报告"
+            sed -n '/<!-- ai-review -->/,$p' /tmp/agent-run.log > /tmp/ai-review.md
           fi
 
-      # ── 回写 PR 评论（幂等：按隐藏标记找到旧评论并更新，避免堆积）──
+          if [ ! -s /tmp/ai-review.md ]; then
+            echo "AI-REVIEW-DEGRADED: 未产出报告（agent 超时或失败）"
+            printf '<!-- ai-review -->\n\n### ⚠️ AI 检视未完成\n\nagent 未能产出报告（超时或异常），请人工评审本次变更。\n\n<sub>详见流水线日志。</sub>\n' > /tmp/ai-review.md
+          fi
+          echo "=== 报告大小: $(wc -c < /tmp/ai-review.md) 字节 ==="
+
+      # ── 生成给邮件用的摘要（从报告提取结论与问题数）──
+      - name: Build email summary
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import os, re
+          p = "/tmp/ai-review.md"
+          out = "/tmp/ai-review-summary.txt"
+          if not os.path.exists(p):
+              open(out, "w").write("AI 检视未运行\n")
+              raise SystemExit(0)
+          t = open(p, encoding="utf-8", errors="ignore").read()
+          m = re.search(r"###\s*结论\s*\n+\s*(.+)", t)
+          verdict = m.group(1).strip() if m else "（未解析出结论）"
+          rows = re.findall(r"^\|\s*[^|]*\|\s*(🚫|⚠️|💡|Blocker|Major|Minor)", t, re.M)
+          blocker = sum(1 for r in rows if r in ("🚫", "Blocker"))
+          major = sum(1 for r in rows if r in ("⚠️", "Major"))
+          minor = sum(1 for r in rows if r in ("💡", "Minor"))
+          summary = (f"{verdict}\n"
+                     f"问题数：Blocker {blocker} / Major {major} / Minor {minor}\n"
+                     f"检视模式：agent（opencode + code-review skill）")
+          open(out, "w").write(summary)
+          print("SUMMARY:", summary.replace("\n", " | "))
+          PYEOF
+
+      # ── 回写 PR 评论（幂等：按隐藏标记找到旧评论并更新）──
       - name: Post review comment (idempotent)
         if: always()
         env:
@@ -61,7 +148,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          [ -f /tmp/ai-review.md ] || exit 0
+          [ -s /tmp/ai-review.md ] || exit 0
           MARKER='<!-- ai-review -->'
           CID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
                  --jq "[.[] | select(.body | contains(\"$MARKER\"))][0].id" 2>/dev/null || echo "")
@@ -75,6 +162,11 @@ jobs:
               | gh api -X POST "repos/$REPO/issues/$PR/comments" --input - > /dev/null \
               && echo "已新建检视评论"
           fi
+
+      # ── 清理含 key 的临时配置 ──
+      - name: Cleanup secrets in workspace
+        if: always()
+        run: rm -f opencode.json
 
       # ── 无论门禁与检视成败，都推送状态 + 检视结论 ──
       - name: Notify (email)
