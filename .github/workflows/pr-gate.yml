@@ -62,8 +62,9 @@ jobs:
           CID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
                  --jq "[.[] | select(.body | contains(\"$MARKER\"))][0].id" 2>/dev/null || echo "")
           if [ -n "$CID" ] && [ "$CID" != "null" ]; then
+            # 更新评论的正确端点是 /issues/comments/{id}（不含 issue 编号）
             jq -Rs '{body: .}' < /tmp/ai-review.md \
-              | gh api -X PATCH "repos/$REPO/issues/$PR/comments/$CID" --input - > /dev/null \
+              | gh api -X PATCH "repos/$REPO/issues/comments/$CID" --input - > /dev/null \
               && echo "已更新既有检视评论（id=$CID）"
           else
             jq -Rs '{body: .}' < /tmp/ai-review.md \
