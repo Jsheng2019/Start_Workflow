@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+from datetime import datetime, timedelta, timezone
 import urllib.request
 
 DEFAULT_BASE = ""
@@ -194,6 +195,8 @@ def merge_reports(parts, meta, stats):
                     f" · {meta.get('changedFiles', 0)} 个文件")
         head.append(f"- 检视范围：{stats['reviewed']} 个文件 / {stats['skipped']} 个跳过"
                     f" / {stats['batches']} 批（模型 `{stats['model']}`）")
+        bj = timezone(timedelta(hours=8))
+        head.append(f"- 检视时间：{datetime.now(bj).strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
         head.append("")
     if len(parts) == 1:
         body = parts[0]
