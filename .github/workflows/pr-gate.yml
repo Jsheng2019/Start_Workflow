@@ -21,6 +21,10 @@ jobs:
     name: Gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # runner 默认 UTC；设为北京时间，使脚本内 date/时间戳输出与本地一致
+      # 注意：日志行首的平台时间戳（...Z）由 runner 注入，不受此项影响，无法修改
+      TZ: Asia/Shanghai
     steps:
       # 本地路径 action（./.github/actions/...）从 workspace 解析，必须先 checkout
       - name: Checkout
