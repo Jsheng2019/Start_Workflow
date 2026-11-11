@@ -1,0 +1,77 @@
+name: LLM Probe
+
+# 临时探针：验证 GitHub 托管 runner 能否访问火山 AI 网关（国内）并正常完成一次补全。
+# 验证通过后即可删除（或保留作为网关健康检查）。
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe gateway from runner
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+        run: |
+          if [ -z "$LLM_API_KEY" ]; then echo "FAIL: LLM_API_KEY 未注入（secret 名不对或未配置）"; exit 1; fi
+          echo "base=$LLM_BASE_URL model=$LLM_MODEL keylen=${#LLM_API_KEY}"
+          cat > /tmp/probe.py << 'PYEOF'
+          import json, os, subprocess, time
+
+          base = os.environ["LLM_BASE_URL"].rstrip("/")
+          key = os.environ["LLM_API_KEY"]
+          model = os.environ["LLM_MODEL"]
+          url = f"{base}/chat/completions"
+
+          body = json.dumps({
+              "model": model,
+              "messages": [{"role": "user", "content": "只回复两个字：收到"}],
+              "max_tokens": 2000,
+              "temperature": 0.2,
+          })
+
+          # 用 curl 的 -w 直接拿到 DNS/TCP/TLS/首字节的分段耗时
+          fmt = "%{http_code}|%{time_namelookup}|%{time_connect}|%{time_appconnect}|%{time_starttransfer}|%{time_total}"
+          results = []
+          for i in range(3):
+              t0 = time.time()
+              r = subprocess.run([
+                  "curl", "-s", "-o", "/tmp/body.json", "-w", fmt, "--max-time", "120",
+                  "-X", "POST", url,
+                  "-H", "content-type: application/json",
+                  "-H", f"authorization: Bearer {key}",
+                  "-d", body,
+              ], capture_output=True, text=True)
+              wall = time.time() - t0
+              parts = r.stdout.strip().split("|")
+              if len(parts) != 6:
+                  print(f"[{i+1}] curl 失败 rc={r.returncode} stderr={r.stderr[:300]}")
+                  results.append(None)
+                  continue
+              code, dns, conn, tls, ttfb, total = parts
+              content_ok = False
+              try:
+                  j = json.load(open("/tmp/body.json"))
+                  msg = j["choices"][0]["message"]
+                  content_ok = bool((msg.get("content") or "").strip())
+                  rt = j.get("usage", {}).get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+                  usage = f"in={j['usage']['prompt_tokens']} out={j['usage']['completion_tokens']} reasoning={rt}"
+              except Exception as e:
+                  usage = f"body解析失败: {str(e)[:80]}"
+              print(f"[{i+1}] HTTP {code} wall={wall:.1f}s dns={dns}s tcp={conn}s tls={tls}s ttfb={ttfb}s total={total}s content_ok={content_ok} {usage}")
+              results.append(code == "200" and content_ok)
+              time.sleep(2)
+
+          ok = sum(1 for x in results if x)
+          print(f"\nRESULT: {ok}/3 成功")
+          if ok == 0:
+              print("HINT: runner 无法访问该网关。考虑：换境外可直连模型 / 给 runner 配代理 / 用自建 runner")
+              raise SystemExit(1)
+          PYEOF
+          python3 /tmp/probe.py
