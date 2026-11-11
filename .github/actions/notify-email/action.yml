@@ -36,6 +36,9 @@ inputs:
   pr-title:
     description: 'PR 标题（pull_request 事件传入，选填）'
     required: false
+  extra-summary-file:
+    description: '额外摘要文件路径（如 AI 检视结论），内容会附在邮件正文中（选填）'
+    required: false
 
 runs:
   using: 'composite'
@@ -54,6 +57,7 @@ runs:
         INPUT_SUBJECT_PREFIX: ${{ inputs.subject-prefix }}
         CTX_PR_NUMBER: ${{ inputs.pr-number }}
         CTX_PR_TITLE: ${{ inputs.pr-title }}
+        INPUT_EXTRA_SUMMARY_FILE: ${{ inputs.extra-summary-file }}
         # ── 运行上下文：action 自动携带，调用方零成本 ──
         CTX_REPO: ${{ github.repository }}
         CTX_WORKFLOW: ${{ github.workflow }}

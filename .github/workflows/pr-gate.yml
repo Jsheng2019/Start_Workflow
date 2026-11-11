@@ -1,22 +1,26 @@
 name: PR Gate
 
 # 门禁流水线：向 main 提交 PR（新建 / 更新 / 重开）时触发。
-# 只打印 hello world，最后调用 notify-email action 推送本次 PR 的状态信息。
+# 流程：hello world → AI 变更代码检视 → 回写 PR 评论 → 邮件通知（含检视结论）
 #
-# 安全说明：使用 pull_request（非 pull_request_target）——同仓分支 PR 可正常
-# 读取 secrets；fork PR 拿不到 secrets（notify 会优雅跳过，不阻塞门禁）。
+# AI 检视为「建议」性质，不阻塞合并：检视失败只降级为提示，不影响门禁结论。
+# 安全：使用 pull_request（非 pull_request_target）——同仓 PR 可用 secrets；
+# fork PR 拿不到 secrets，AI 检视与邮件均会优雅跳过。
 
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
 
-permissions: {}
+permissions:
+  contents: read
+  pull-requests: write # 回写 AI 检视评论所需
 
 jobs:
   gate:
     name: Gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # 本地路径 action（./.github/actions/...）从 workspace 解析，必须先 checkout
       - name: Checkout
@@ -26,7 +30,48 @@ jobs:
       - name: Hello world
         run: echo "hello world"
 
-      # 无论门禁成败，都推送本次 PR 的状态信息
+      # ── AI 检视：语法规范 / 缺陷 / 安全，结果写入文件供评论与邮件复用 ──
+      - name: AI review changed code
+        id: ai_review
+        continue-on-error: true # 检视失败不阻塞门禁
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          set -o pipefail
+          if ! python3 .github/scripts/ai_review.py ${{ github.event.pull_request.number }} 2>&1 | tee /tmp/ai-review.log; then
+            echo "AI-REVIEW-DEGRADED: 检视未完成，将在评论与邮件中提示"
+            printf 'AI 检视未完成（脚本异常）。请人工评审，或查看流水线日志中的 AI-REVIEW-FAILED 行。\n' \
+              > /tmp/ai-review-summary.txt
+            printf '<!-- ai-review -->\n\n### ⚠️ AI 检视未完成\n\n自动检视执行异常，请人工评审本次变更。\n\n<sub>详见流水线日志。</sub>\n' \
+              > /tmp/ai-review.md
+          fi
+
+      # ── 回写 PR 评论（幂等：按隐藏标记找到旧评论并更新，避免堆积）──
+      - name: Post review comment (idempotent)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          [ -f /tmp/ai-review.md ] || exit 0
+          MARKER='<!-- ai-review -->'
+          CID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq "[.[] | select(.body | contains(\"$MARKER\"))][0].id" 2>/dev/null || echo "")
+          if [ -n "$CID" ] && [ "$CID" != "null" ]; then
+            jq -Rs '{body: .}' < /tmp/ai-review.md \
+              | gh api -X PATCH "repos/$REPO/issues/$PR/comments/$CID" --input - > /dev/null \
+              && echo "已更新既有检视评论（id=$CID）"
+          else
+            jq -Rs '{body: .}' < /tmp/ai-review.md \
+              | gh api -X POST "repos/$REPO/issues/$PR/comments" --input - > /dev/null \
+              && echo "已新建检视评论"
+          fi
+
+      # ── 无论门禁与检视成败，都推送状态 + 检视结论 ──
       - name: Notify (email)
         if: always()
         uses: ./.github/actions/notify-email
@@ -34,6 +79,7 @@ jobs:
           status: ${{ job.status }}
           pr-number: ${{ github.event.pull_request.number }}
           pr-title: ${{ github.event.pull_request.title }}
+          extra-summary-file: /tmp/ai-review-summary.txt
           mail-from: ${{ vars.MAIL_FROM }}
           mail-to: ${{ vars.MAIL_TO }}
           smtp-password: ${{ secrets.SMTP_PASSWORD }}

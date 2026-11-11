@@ -54,6 +54,18 @@ def esc(value):
     return html.escape(value or "", quote=True)
 
 
+def read_summary(path, limit=1500):
+    """读取额外摘要文件（如 AI 检视结论），失败返回空串。"""
+    if not path:
+        return ""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            text = f.read().strip()
+        return text[:limit]
+    except OSError:
+        return ""
+
+
 def conclusion_display(status):
     return STATUS_MAP.get(status, STATUS_FALLBACK)
 
@@ -82,6 +94,8 @@ def text_body(data):
     ]
     if data.get("pr_number"):
         lines.insert(10, f"PR       : #{data['pr_number']} {data.get('pr_title') or ''}")
+    if data.get("extra_summary"):
+        lines += ["", "附加说明：", "-" * 40, data["extra_summary"]]
     return "\n".join(lines)
 
 
@@ -92,6 +106,15 @@ def html_body(data):
     value = 'style="padding:7px 0;font-weight:600;"'
     code = ('style="font-family:ui-monospace,SFMono-Regular,Consolas,monospace;'
             'background-color:#eff2f5;border-radius:6px;padding:2px 6px;font-weight:400;"')
+    summary_block = ""
+    if data.get("extra_summary"):
+        safe = esc(data["extra_summary"]).replace("\n", "<br>")
+        summary_block = (
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            'style="margin-top:16px;background-color:#f6f8fa;border-left:3px solid #0969da;border-radius:4px;">'
+            f'<tr><td style="padding:12px 14px;font-size:13px;color:#24292f;line-height:1.6;">'
+            f'<strong>附加说明</strong><br>{safe}</td></tr></table>'
+        )
     pr_row = ""
     if data.get("pr_number"):
         title = f' {esc(data["pr_title"])}' if data.get("pr_title") else ""
@@ -128,6 +151,7 @@ def html_body(data):
       {pr_row}
       {commit_time}
     </table>
+    {summary_block}
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:18px;"><tr>
       <td align="center" bgcolor="#0969da" style="border-radius:6px;">
         <a href="{esc(data['run_url'])}"
@@ -174,6 +198,7 @@ def main():
         "commit_time": env("CTX_COMMIT_TIME"),
         "pr_number": env("CTX_PR_NUMBER"),
         "pr_title": env("CTX_PR_TITLE"),
+        "extra_summary": read_summary(env("INPUT_EXTRA_SUMMARY_FILE")),
     }
     emoji, text, _, _ = conclusion_display(data["status"])
     prefix = env("INPUT_SUBJECT_PREFIX") or data["repo"]
