@@ -18,6 +18,10 @@ jobs:
     name: Gate
     runs-on: ubuntu-latest
     steps:
+      # 本地路径 action（./.github/actions/...）从 workspace 解析，必须先 checkout
+      - name: Checkout
+        uses: actions/checkout@v4
+
       # 门禁主体：只打印 hello world（本地产物为成功，用于演示门禁流程）
       - name: Hello world
         run: echo "hello world"
