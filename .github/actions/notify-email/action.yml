@@ -30,6 +30,12 @@ inputs:
   subject-prefix:
     description: '邮件主题前缀，缺省为仓库名'
     required: false
+  pr-number:
+    description: 'PR 编号（pull_request 事件传入，选填，显示在卡片中）'
+    required: false
+  pr-title:
+    description: 'PR 标题（pull_request 事件传入，选填）'
+    required: false
 
 runs:
   using: 'composite'
@@ -46,6 +52,8 @@ runs:
         INPUT_SMTP_PORT: ${{ inputs.smtp-port }}
         INPUT_SMTP_USER: ${{ inputs.smtp-user }}
         INPUT_SUBJECT_PREFIX: ${{ inputs.subject-prefix }}
+        CTX_PR_NUMBER: ${{ inputs.pr-number }}
+        CTX_PR_TITLE: ${{ inputs.pr-title }}
         # ── 运行上下文：action 自动携带，调用方零成本 ──
         CTX_REPO: ${{ github.repository }}
         CTX_WORKFLOW: ${{ github.workflow }}

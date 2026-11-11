@@ -1,0 +1,35 @@
+name: PR Gate
+
+# 门禁流水线：向 main 提交 PR（新建 / 更新 / 重开）时触发。
+# 只打印 hello world，最后调用 notify-email action 推送本次 PR 的状态信息。
+#
+# 安全说明：使用 pull_request（非 pull_request_target）——同仓分支 PR 可正常
+# 读取 secrets；fork PR 拿不到 secrets（notify 会优雅跳过，不阻塞门禁）。
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    steps:
+      # 门禁主体：只打印 hello world（本地产物为成功，用于演示门禁流程）
+      - name: Hello world
+        run: echo "hello world"
+
+      # 无论门禁成败，都推送本次 PR 的状态信息
+      - name: Notify (email)
+        if: always()
+        uses: ./.github/actions/notify-email
+        with:
+          status: ${{ job.status }}
+          pr-number: ${{ github.event.pull_request.number }}
+          pr-title: ${{ github.event.pull_request.title }}
+          mail-from: ${{ vars.MAIL_FROM }}
+          mail-to: ${{ vars.MAIL_TO }}
+          smtp-password: ${{ secrets.SMTP_PASSWORD }}

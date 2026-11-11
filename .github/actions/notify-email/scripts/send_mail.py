@@ -90,6 +90,10 @@ def html_body(data):
     value = 'style="padding:7px 0;font-weight:600;"'
     code = ('style="font-family:ui-monospace,SFMono-Regular,Consolas,monospace;'
             'background-color:#eff2f5;border-radius:6px;padding:2px 6px;font-weight:400;"')
+    pr_row = ""
+    if data.get("pr_number"):
+        title = f' {esc(data["pr_title"])}' if data.get("pr_title") else ""
+        pr_row = f'<tr><td {field}>PR</td><td {value}><a href="{esc(data["run_url"])}" style="color:#0969da;text-decoration:none;">#{esc(data["pr_number"])}</a>{title}</td></tr>'
     commit_time = ""
     if data["commit_time"]:
         commit_time = (f'<tr><td {field}>提交时间</td>'
@@ -119,6 +123,7 @@ def html_body(data):
       <tr><td {field}>执行人</td><td {value}>{esc(data['actor'] or '/')}</td></tr>
       <tr><td {field}>触发方式</td><td {value}>{esc(data['event'] or '/')}</td></tr>
       <tr><td {field}>Run 编号</td><td {value}>#{esc(data['run_number'])}</td></tr>
+      {pr_row}
       {commit_time}
     </table>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:18px;"><tr>
@@ -165,6 +170,8 @@ def main():
         "run_id": env("CTX_RUN_ID"),
         "run_url": env("CTX_RUN_URL"),
         "commit_time": env("CTX_COMMIT_TIME"),
+        "pr_number": env("CTX_PR_NUMBER"),
+        "pr_title": env("CTX_PR_TITLE"),
     }
     emoji, text, _, _ = conclusion_display(data["status"])
     prefix = env("INPUT_SUBJECT_PREFIX") or data["repo"]
